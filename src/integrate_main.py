@@ -11,3 +11,4 @@ if __name__ == "__main__":
     cavs = np.load(os.path.join(save_path,model_to_run,"cavs.npy"), allow_pickle=True)
     intergrate_cav = IntegrateCAV(cavs=cavs)
     intergrate_cav.align(dim_align_method=dim_align_method)
+    import pdb; pdb.set_trace()

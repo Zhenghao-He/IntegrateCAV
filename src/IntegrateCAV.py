@@ -21,8 +21,8 @@ def prepare_batch(cavs):
     """
     n_layers = len(cavs)
     layer_query, layer_key = random.sample(range(n_layers), 2)  #random sample two layers
-    cav_query = torch.tensor([cav for cav in cavs[layer_query]]).cuda()
-    cav_key = torch.tensor([cav for cav in cavs[layer_key]]).cuda()
+    cav_query = torch.tensor(np.array(cavs[layer_query])).cuda()
+    cav_key = torch.tensor(np.array(cavs[layer_key])).cuda()
     # cav_query = []
     # for cav in cavs[layer_query]:
     #     cav_query.append(cav)
@@ -36,59 +36,69 @@ def prepare_batch(cavs):
 
 class MoCoCAV(nn.Module):
     def __init__(self, input_dim, embed_dim, cavs, queue_size=4096, momentum=0.999, temperature=0.07):
-        """
-        MoCo aligns CAVs using a momentum encoder and a dynamic queue.
-        Args:
-            input_dim: CAV 
-            embed_dim: 
-            cavs: initialize the queue with CAVs
-            queue_size: 
-            momentum: 
-            temperature: 
-        """
         super().__init__()
         self.query_encoder = nn.Linear(input_dim, embed_dim).to("cuda")
         self.key_encoder = nn.Linear(input_dim, embed_dim).to("cuda")
-        
 
-        # dynamic queue
-
+        # Initialize queue
         self.register_buffer("queue", torch.randn(queue_size, embed_dim))
-        self.queue = F.normalize(self.queue, dim=1)
+        self.queue = F.normalize(self.queue, dim=1).detach()
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
-        
-        num_layers = len(cavs)
-        num_concepts = len(cavs[0])
-        # import pdb; pdb.set_trace()
-        for i in range(queue_size):
-            layer_idx = (i // num_concepts) % num_layers  
-            concept_idx = i % num_concepts     
-            cav = torch.tensor(cavs[layer_idx][concept_idx], dtype=torch.float32).cuda() 
-            encoded_cav = F.normalize(self.key_encoder(cav), dim=0).clone() 
-            self.queue[i, :] = encoded_cav
 
-        # import pdb; pdb.set_trace()
+        # Preprocess cavs
+        cavs_array = np.array(cavs, dtype=np.float32)  # 转为 NumPy 数组
+        cavs_tensor = torch.tensor(cavs_array, dtype=torch.float32).cuda()  # 转为 Tensor
+
+        # cavs_tensor = torch.tensor(cavs, dtype=torch.float32).cuda()  # Entire tensor for efficiency
+        num_layers = cavs_tensor.size(0)
+        num_concepts = cavs_tensor.size(1)
+
+        queue_data = []
+        for i in range(queue_size):
+            layer_idx = (i // num_concepts) % num_layers
+            concept_idx = i % num_concepts
+            cav = cavs_tensor[layer_idx, concept_idx, :]
+            encoded_cav = F.normalize(self.key_encoder(cav), dim=0).detach()
+            queue_data.append(encoded_cav)
+
+        self.queue = torch.stack(queue_data)
 
         self.momentum = momentum
         self.temperature = temperature
 
+
     @torch.no_grad()
-    def _momentum_update_key_encoder(self):
+    def momentum_update_key_encoder(self):
         """update the key encoder by using momentum"""
         for param_q, param_k in zip(self.query_encoder.parameters(), self.key_encoder.parameters()):
             param_k.data = self.momentum * param_k.data + (1 - self.momentum) * param_q.data
 
     @torch.no_grad()
-    def _dequeue_and_enqueue(self, keys):
+    def dequeue_and_enqueue(self, keys):
         """update queue"""
         batch_size = keys.shape[0]
         ptr = int(self.queue_ptr)
+        queue_size = self.queue.size(0)
         assert batch_size <= self.queue.size(0), "queue size is too small to hold the current batch"
 
         
-        self.queue[ptr:ptr + batch_size, :] = keys
-        ptr = (ptr + batch_size) % self.queue.size(0)  # move pointer 
+        # Number of items that can fit at the end of the queue
+        remaining_space = queue_size - ptr
+
+        if batch_size <= remaining_space:
+            # Case 1: All keys fit in the remaining space
+            self.queue[ptr:ptr + batch_size, :] = keys
+        else:
+            # Case 2: Split the keys into two parts
+            self.queue[ptr:, :] = keys[:remaining_space, :]  # Fill the end of the queue
+            self.queue[:batch_size - remaining_space, :] = keys[remaining_space:, :]  # Wrap around to the start
+
+        # Update the pointer (modulo to ensure circular behavior)
+        ptr = (ptr + batch_size) % queue_size
         self.queue_ptr[0] = ptr
+
+
+
 
     def forward(self, cav_query, cav_key):
         """
@@ -100,25 +110,27 @@ class MoCoCAV(nn.Module):
         """
         # normalize the features
         # import pdb; pdb.set_trace()
-        q = F.normalize(self.query_encoder(cav_query), dim=1).clone()
-        with torch.no_grad():
-            self._momentum_update_key_encoder()  # update the key encoder
-            k = F.normalize(self.key_encoder(cav_key), dim=1).clone()
-
+        # encoded_q = self.query_encoder(cav_query)
+        q = F.normalize(self.query_encoder(cav_query), dim=1)
+        # with torch.no_grad():
+            # self._momentum_update_key_encoder()  # update the key encoder
+        k = F.normalize(self.key_encoder(cav_key), dim=1)
+        k = k.detach()  # no gradient to key encoder
         # compute logits InfoNCE loss
         positive_sim = torch.einsum("nc,nc->n", [q, k]).unsqueeze(-1)  # positive similarity
         negative_sim = torch.mm(q, self.queue.T)  # negative similarity
 
+        # negative_sim = 
         logits = torch.cat([positive_sim, negative_sim], dim=1)  # concatenate positive and negative logits
-        logits /= self.temperature  # temperature scaling
+        logits_with_t = logits / self.temperature  # temperature scaling
 
-        labels = torch.zeros(logits.size(0), dtype=torch.long).cuda()  # positive index is 0
-        loss = F.cross_entropy(logits, labels)
+        labels = torch.zeros(logits_with_t.size(0), dtype=torch.long).cuda()  # positive index is 0
+        loss = F.cross_entropy(logits_with_t, labels)
 
         # update the queue
-        self._dequeue_and_enqueue(k)
+        # self._dequeue_and_enqueue(k)
 
-        return loss
+        return loss, k
 
 
 
@@ -160,7 +172,7 @@ class IntegrateCAV(nn.Module):
             aligned_cavs.append(embedded.cpu().detach().numpy())
         return aligned_cavs
 
-    def align(self, embed_dim=2048, epochs = 2, dim_align_method="zero_padding"):
+    def align(self, embed_dim=2048, epochs = 2000, dim_align_method="zero_padding"):
 
         if dim_align_method == "zero_padding":
             input_cavs, input_dim = self._align_dimension_by_zero()
@@ -171,18 +183,19 @@ class IntegrateCAV(nn.Module):
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
         
-        epochs = 2
+        # epochs = 2
         for epoch in range(epochs):
             epoch_loss = 0
 
             cav_query, cav_key = prepare_batch(input_cavs)
             # cav_query, cav_key = torch.tensor(cav_query).cuda(), torch.tensor(cav_key).cuda()
 
-            loss = model(cav_query, cav_key)
+            loss, k = model(cav_query, cav_key)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+            model.momentum_update_key_encoder()
+            model.dequeue_and_enqueue(k)
             epoch_loss += loss.item()
 
             print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss:.4f}")
