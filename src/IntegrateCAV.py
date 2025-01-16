@@ -16,29 +16,22 @@ def prepare_batch(cavs):
         cavs:  [n_layers, n_concepts, cav_dim]
         concept_idx: 
     Returns:
-        cav_query: 
-        cav_key: 
+        cav_query: Tensor
+        cav_key: Tensor
     """
     n_layers = len(cavs)
     layer_query, layer_key = random.sample(range(n_layers), 2)  #random sample two layers
-    cav_query = torch.tensor(np.array(cavs[layer_query])).cuda()
-    cav_key = torch.tensor(np.array(cavs[layer_key])).cuda()
-    # cav_query = []
-    # for cav in cavs[layer_query]:
-    #     cav_query.append(cav)
-    # cav_query = np.array(cav_query)
-    # cav_key = []
-    # for cav in cavs[layer_key]:
-    #     cav_key.append(cav)
-    # cav_key = np.array(cav_key)
+    cav_query = torch.stack(cavs[layer_query])  # [n_concept_tensors, tensor_dim]
+    cav_key = torch.stack(cavs[layer_key])  
     return cav_query, cav_key
 
 
 class MoCoCAV(nn.Module):
-    def __init__(self, input_dim, embed_dim, cavs, queue_size=4096, momentum=0.999, temperature=0.07):
+    def __init__(self, input_dim, embed_dim, cavs, queue_size=4096, momentum=0.999, temperature=0.07, device = "cuda"):
         super().__init__()
-        self.query_encoder = nn.Linear(input_dim, embed_dim).to("cuda")
-        self.key_encoder = nn.Linear(input_dim, embed_dim).to("cuda")
+        self.device = device
+        self.query_encoder = nn.Linear(input_dim, embed_dim).to(self.device)
+        self.key_encoder = nn.Linear(input_dim, embed_dim).to(self.device)
 
         # Initialize queue
         self.register_buffer("queue", torch.randn(queue_size, embed_dim))
@@ -46,18 +39,23 @@ class MoCoCAV(nn.Module):
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
         # Preprocess cavs
-        cavs_array = np.array(cavs, dtype=np.float32)  # 转为 NumPy 数组
-        cavs_tensor = torch.tensor(cavs_array, dtype=torch.float32).cuda()  # 转为 Tensor
+        # cavs_tensor = torch.tensor(cavs, dtype=torch.float32).cuda()
+        # cavs_array = np.array(cavs.cpu(), dtype=np.float32)  #
+        # cavs_tensor = torch.tensor(cavs_array, dtype=torch.float32).cuda() 
 
-        # cavs_tensor = torch.tensor(cavs, dtype=torch.float32).cuda()  # Entire tensor for efficiency
-        num_layers = cavs_tensor.size(0)
-        num_concepts = cavs_tensor.size(1)
+        # Entire tensor for efficiency
+        num_layers = len(cavs)
+        num_concepts = len(cavs[0])
+        # num_layers = cavs_tensor.size(0)
+        # num_concepts = cavs_tensor.size(1)
 
         queue_data = []
         for i in range(queue_size):
             layer_idx = (i // num_concepts) % num_layers
             concept_idx = i % num_concepts
-            cav = cavs_tensor[layer_idx, concept_idx, :]
+            # cav = cavs_tensor[layer_idx, concept_idx, :]
+            # import pdb; pdb.set_trace()
+            cav = cavs[layer_idx][concept_idx]
             encoded_cav = F.normalize(self.key_encoder(cav), dim=0).detach()
             queue_data.append(encoded_cav)
 
@@ -109,38 +107,34 @@ class MoCoCAV(nn.Module):
             loss: 
         """
         # normalize the features
-        # import pdb; pdb.set_trace()
-        # encoded_q = self.query_encoder(cav_query)
         q = F.normalize(self.query_encoder(cav_query), dim=1)
-        # with torch.no_grad():
-            # self._momentum_update_key_encoder()  # update the key encoder
         k = F.normalize(self.key_encoder(cav_key), dim=1)
         k = k.detach()  # no gradient to key encoder
         # compute logits InfoNCE loss
         positive_sim = torch.einsum("nc,nc->n", [q, k]).unsqueeze(-1)  # positive similarity
         negative_sim = torch.mm(q, self.queue.T)  # negative similarity
 
-        # negative_sim = 
         logits = torch.cat([positive_sim, negative_sim], dim=1)  # concatenate positive and negative logits
         logits_with_t = logits / self.temperature  # temperature scaling
 
-        labels = torch.zeros(logits_with_t.size(0), dtype=torch.long).cuda()  # positive index is 0
+        labels = torch.zeros(logits_with_t.size(0), dtype=torch.long).to(self.device)  # positive index is 0
         loss = F.cross_entropy(logits_with_t, labels)
-
-        # update the queue
-        # self._dequeue_and_enqueue(k)
 
         return loss, k
 
 
 
 class IntegrateCAV(nn.Module):
-    def __init__(self, cavs):
+    def __init__(self, cavs, device, autoencoders=None, dim_align_method="zero_padding"):
         super().__init__()
         self.cavs = cavs
         self.aligned_cavs = []
-        
-    
+        self.fused_cavs = []
+        self.device = device
+        self.__isAligned = False
+        self.autoencoders = autoencoders
+        self.dim_align_method = dim_align_method
+
     def _align_dimension_by_zero(self):
         """
         Align the dimensions of CAVs by zero padding
@@ -152,12 +146,13 @@ class IntegrateCAV(nn.Module):
             for cav in cavs_layer:
                 if len(cav) < max_dim:
                     cav = np.pad(cav, (0, max_dim - len(cav)), 'constant')
+                cav = torch.tensor(cav, dtype=torch.float32).to(self.device)
                 cavs_layer_tmp.append(cav)
             cavs_same_dim.append(cavs_layer_tmp)
         return cavs_same_dim, max_dim
     
 
-    def _align_dimension_by_ae(autoencoder, cavs):
+    def _align_dimension_by_ae(self):
         """
         Args:
             autoencoder: trained CAVAutoencoder model
@@ -165,28 +160,72 @@ class IntegrateCAV(nn.Module):
         Returns:
             aligned_cavs: 
         """
-        aligned_cavs = []
-        for layer_idx, layer_cavs in enumerate(cavs):
-            layer_cavs = torch.tensor(layer_cavs, dtype=torch.float32).cuda()
-            _, embedded = autoencoder(layer_cavs, layer_idx)  
-            aligned_cavs.append(embedded.cpu().detach().numpy())
-        return aligned_cavs
+        input_cavs = []
+        for layer_idx, cavs_layer in enumerate(self.cavs):
+            cavs_layer_tmp = []
+            layer_autoencoder = self.autoencoders.load_autoencoder(layer_idx)
+            for cav in cavs_layer:
+                cav = torch.tensor(cav).to(self.device)
+                cav = layer_autoencoder.encode(cav).detach()
+                cavs_layer_tmp.append(cav)
+            input_cavs.append(cavs_layer_tmp)
+        return input_cavs
 
-    def align(self, embed_dim=2048, epochs = 2000, dim_align_method="zero_padding"):
-
-        if dim_align_method == "zero_padding":
-            input_cavs, input_dim = self._align_dimension_by_zero()
+    def align_with_moco(self, queue_size, momentum, temperature, embed_dim=2048, epochs = 2000, overwrite=False,save_dir="./analysis"):
+        save_dir = os.path.join(save_dir,"align_model", self.dim_align_method)
+        if not overwrite :
+            if os.path.exists(os.path.join(save_dir,"aligned_cavs.npy")):
+                print("Aligned CAVs already exist. Loading from saved files.")
+                self.aligned_cavs = np.load(os.path.join(save_dir,"aligned_cavs.npy"), allow_pickle=True)
+                print("Aligned CAVs loaded!")
+                self.__isAligned = True
+                return self.aligned_cavs
+            elif os.path.exists(os.path.join(save_dir,"query_encoder.pth")):
+                print("Model already exists. Loading from saved files.")
+                model = MoCoCAV(input_dim=embed_dim, embed_dim=embed_dim, cavs=self.cavs, queue_size=queue_size, momentum=momentum, temperature=temperature, device = self.device).to(self.device)
+                model.query_encoder.load_state_dict(torch.load(os.path.join(save_dir,"query_encoder.pth")))
+                model.query_encoder.eval()
+                with torch.no_grad():
+                    for cavs_layer in self.cavs:
+                        aligned_cavs_layer = []
+                        for cav in cavs_layer:
+                            cav = torch.tensor(cav).cuda()
+                            cav = model.query_encoder(cav)
+                            aligned_cavs_layer.append(cav.cpu().numpy())
+                        self.aligned_cavs.append(aligned_cavs_layer)
+                print("CAVs aligned!")
+                np.save(os.path.join(save_dir,"aligned_cavs.npy"), self.aligned_cavs)
+                print("Aligned CAVs saved at", os.path.join(save_dir,"aligned_cavs.npy"))
+                self.__isAligned = True
+                return self.aligned_cavs
         else:
-            raise NotImplementedError(f"Dimension alignment method {dim_align_method} is not implemented.")
+            print("Overwriting the existing files.")
+            self.__isAligned = False
+            
+        
+        if self.__isAligned:
+            print("CAVs already aligned!")
+            return self.aligned_cavs
+        
 
-        model = MoCoCAV(input_dim=input_dim, embed_dim=embed_dim,cavs=input_cavs, queue_size=256, momentum=0.999, temperature=0.07).cuda()
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        if self.autoencoders is None:
+            raise ValueError("Autoencoders are not provided. Please provide the trained autoencoders.")
+        
+        if self.dim_align_method == "zero_padding":
+            input_cavs, input_dim = self._align_dimension_by_zero()
+        elif self.dim_align_method == "autoencoder":
+            input_cavs = self._align_dimension_by_ae()
+            input_dim = embed_dim
+        else:
+            raise NotImplementedError(f"Dimension alignment method {self.dim_align_method} is not implemented.")
 
         
-        # epochs = 2
+        model = MoCoCAV(input_dim=input_dim, embed_dim=embed_dim,cavs=input_cavs, queue_size=queue_size, momentum=momentum, temperature=temperature, device = self.device).to(self.device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
         for epoch in range(epochs):
             epoch_loss = 0
-
+            # import pdb; pdb.set_trace()
             cav_query, cav_key = prepare_batch(input_cavs)
             # cav_query, cav_key = torch.tensor(cav_query).cuda(), torch.tensor(cav_key).cuda()
 
@@ -199,6 +238,11 @@ class IntegrateCAV(nn.Module):
             epoch_loss += loss.item()
 
             print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss:.4f}")
+        
+        os.makedirs(save_dir, exist_ok=True)
+        save_path  = os.path.join(save_dir,"query_encoder.pth")
+        torch.save(model.query_encoder.state_dict(), save_path)
+        print(f"Model saved to {save_path}")
 
         model.query_encoder.eval()
         with torch.no_grad():
@@ -209,4 +253,40 @@ class IntegrateCAV(nn.Module):
                     cav = model.query_encoder(cav)
                     aligned_cavs_layer.append(cav.cpu().numpy())
                 self.aligned_cavs.append(aligned_cavs_layer)
+        print("CAVs aligned!")
+       
+        np.save(os.path.join(save_dir,"aligned_cavs.npy"), self.aligned_cavs)
+        print("Aligned CAVs saved at", os.path.join(save_dir,"aligned_cavs.npy"))
+        self.__isAligned = True
+        return self.aligned_cavs
+
+    def fuse(self,fuse_method="mean", overwrite=False, save_dir="./analysis"):
+        """
+        Fuse the aligned CAVs
+        """
+        if not self.__isAligned:
+            raise ValueError("CAVs are not aligned. Please align the CAVs first.")
+
+        save_dir = os.path.join(save_dir,"fuse_model", self.dim_align_method, fuse_method)
+        if not overwrite:
+            if os.path.exists(os.path.join(save_dir,"fused_cavs.npy")):
+                print("Fused CAVs already exist. Loading from saved files.")
+                self.fused_cavs = np.load(os.path.join(save_dir,"fused_cavs.npy"), allow_pickle=True)
+                print("Fused CAVs loaded!")
+                return self.fused_cavs
+        
+            
+        if fuse_method == "mean":
+            fused_cavs = np.mean(np.array(self.aligned_cavs), axis=0)
+        else:
+            raise NotImplementedError(f"Fuse method {fuse_method} is not implemented.")
+        self.fused_cavs = fused_cavs # [num_concepts, cav_dim]
+        os.makedirs(save_dir, exist_ok=True)
+        np.save(os.path.join(save_dir,"fused_cavs.npy"), fused_cavs)
+        print("Fused CAVs saved at", os.path.join(save_dir,"fused_cavs.npy"))
+        return self.fused_cavs
+
+    
+    
+
 
