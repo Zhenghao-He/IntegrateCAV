@@ -3,8 +3,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import os
+
+def remove_module_prefix(state_dict):
+    """
+    Remove the 'module.' prefix from keys in the state_dict
+    to avoid issues when loading a model with nn.DataParallel.
+    """
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        new_key = key.replace('module.', '')  # Remove 'module.' prefix
+        new_state_dict[new_key] = value
+    return new_state_dict
+
+
+
+
+class CosineSimilarityLoss(torch.nn.Module):
+    def __init__(self, dim=1):
+        super(CosineSimilarityLoss, self).__init__()
+        self.dim = dim  
+
+    def forward(self, output, target):
+        cosine_sim = F.cosine_similarity(output, target, dim=self.dim)
+        loss = 1 - cosine_sim.mean()  
+        return loss
+
 class SingleLayerAutoencoder(nn.Module):
-    def __init__(self, input_dim, embed_dim, hidden_dims=[256, 128], dropout=0.1):
+    def __init__(self, input_dim, embed_dim, hidden_dims=[4096, 4096], dropout=0.1):
         """
         Autoencoder for a single layer's CAVs with MLP encoder and decoder.
         Args:
@@ -57,24 +82,38 @@ class SingleLayerAutoencoder(nn.Module):
     def decode(self, embedded):
         return self.decoder(embedded)
 
-
-class CAVAutoencoder(nn.Module):
-    def __init__(self, input_dims, embed_dim,device):
+class CAVAutoencoder:
+    def __init__(self, input_dims, embed_dim, device, save_dir):
         """
-        Manages an Autoencoder for each layer's CAVs.
         Args:
             input_dims: list of input dimensions for each layer
             embed_dim: shared embedding dimension for all layers
+            device: computation device (e.g., "cuda" or "cpu")
         """
-        super(CAVAutoencoder, self).__init__()
         self.device = device
-        self.__isTrained = False
-        self.autoencoders = [
-            SingleLayerAutoencoder(input_dim, embed_dim).to(self.device)
-            for input_dim in input_dims
-        ]
+        self.embed_dim = embed_dim
+        self.input_dims = input_dims
+        self.autoencoders = [None] * len(input_dims)  # Placeholder for Autoencoders
+        self.__isTrained = [False] * len(input_dims)  # Track training status
+        self.save_dir = os.path.join(save_dir, "autoencoders")
 
-    def train_autoencoders(self, cavs, save_dir, overwrite, epochs=50, lr=1e-3):
+    def get_autoencoder(self, layer_idx):
+        """
+        Get or initialize the Autoencoder for a specific layer.
+        """
+        if self.autoencoders[layer_idx] is None:
+            autoencoder = SingleLayerAutoencoder(
+                input_dim=self.input_dims[layer_idx],
+                embed_dim=self.embed_dim
+            ).to(self.device)
+  
+        if torch.cuda.device_count() > 1:
+            autoencoder = nn.DataParallel(autoencoder)
+            
+        return autoencoder
+        
+
+    def train_autoencoders(self, cavs, overwrite, epochs=50, lr=1e-3):
         """
         Train each layer's Autoencoder.
         Args:
@@ -82,56 +121,69 @@ class CAVAutoencoder(nn.Module):
             epochs: number of training epochs
             lr: learning rate
         """
-        save_dir = os.path.join(save_dir, "autoencoders")
-        if not overwrite and all(os.path.exists(os.path.join(save_dir, f"autoencoder_layer_{i}.pth")) for i in range(len(self.autoencoders))):
-            print("Autoencoders already trained. Loading from saved files.")
+        if not overwrite and all(os.path.exists(os.path.join(self.save_dir, f"autoencoder_layer_{i}.pth")) for i in range(len(self.autoencoders))):
+            print("Autoencoders already trained.")
             for layer_idx, autoencoder in enumerate(self.autoencoders):
-                autoencoder.load_state_dict(torch.load(f"{save_dir}/autoencoder_layer_{layer_idx}.pth"))
-                autoencoder.eval()
-            self.__isTrained = True
+                self.__isTrained[layer_idx] = True
             return
 
-        os.makedirs(save_dir, exist_ok=True)
-        optimizers = [
-            torch.optim.Adam(autoencoder.parameters(), lr=lr)
-            for autoencoder in self.autoencoders
-        ]
-        loss_fn = nn.MSELoss()
+        os.makedirs(self.save_dir, exist_ok=True)
+        # loss_fn = nn.MSELoss()
+        loss_fn = CosineSimilarityLoss()
 
-        for epoch in range(epochs):
-            total_loss = 0
-            for layer_idx, (autoencoder, optimizer, layer_cavs) in enumerate(zip(self.autoencoders, optimizers, cavs)):
-                # Convert CAVs to tensor
-                layer_cavs = np.stack(layer_cavs)
-                layer_cavs = torch.tensor(layer_cavs, dtype=torch.float32).cuda()
-
+        for layer_idx, (autoencoder, layer_cavs) in enumerate(zip(self.autoencoders, cavs)):
+            
+            print(f"Training Autoencoder for Layer {layer_idx + 1}")
+            autoencoder = self.get_autoencoder(layer_idx)
+            # Initialize optimizer for the current Autoencoder
+            optimizer = torch.optim.Adam(autoencoder.parameters(), lr=lr)
+            
+            # Convert CAVs to tensor
+            layer_cavs = np.stack(layer_cavs)
+            layer_cavs = torch.tensor(layer_cavs, dtype=torch.float32).cuda()
+            
+            # Train the Autoencoder for this layer
+            for epoch in range(epochs):
+                optimizer.zero_grad()
+                
                 # Forward pass
                 reconstructed, _ = autoencoder(layer_cavs)
-
+                
                 # Compute loss
                 loss = loss_fn(reconstructed, layer_cavs)
-                total_loss += loss.item()
-
+                
                 # Backward pass
-                optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-
-            print(f"Epoch {epoch + 1}/{epochs}, Total Loss: {total_loss:.4f}")
-
-        print("Training complete!")
-            # Save each trained Autoencoder
-
-        for layer_idx, autoencoder in enumerate(self.autoencoders):
+                
+                print(f"Layer {layer_idx + 1}, Epoch {epoch + 1}/{epochs}, Loss: {loss.item():.4f}")
+            
+            print(f"Training complete for Layer {layer_idx + 1}!")
             autoencoder.eval()
-            torch.save(autoencoder.state_dict(), os.path.join(save_dir, f"autoencoder_layer_{layer_idx}.pth"))
-        print(f"Autoencoders saved to {save_dir}.")
-        self.__isTrained = True
+            torch.save(autoencoder.state_dict(), os.path.join(self.save_dir, f"autoencoder_layer_{layer_idx}.pth")) 
+            print(f"Autoencoders saved to {self.save_dir}.")
+            del autoencoder # Clear memory
+            torch.cuda.empty_cache()
+            self.__isTrained[layer_idx] = True
 
     def load_autoencoder(self, layer_idx):
-        if not self.__isTrained:
-            raise ValueError("Autoencoders have not been trained yet.")
-        return self.autoencoders[layer_idx]
+        """
+        Load a trained Autoencoder from a file.
+        """
+        autoencoder = SingleLayerAutoencoder(
+                input_dim=self.input_dims[layer_idx],
+                embed_dim=self.embed_dim
+            ).to(self.device)
+        # Load the checkpoint and remove 'module.' prefix
+        checkpoint = torch.load(os.path.join(self.save_dir, f"autoencoder_layer_{layer_idx}.pth"))
+        # import pdb; pdb.set_trace()
+        checkpoint = remove_module_prefix(checkpoint)
+        # autoencoder = nn.DataParallel(autoencoder)
+        autoencoder.load_state_dict(checkpoint)
+        autoencoder.eval()
+        return autoencoder
+
+
         
 
 

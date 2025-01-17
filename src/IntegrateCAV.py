@@ -169,6 +169,7 @@ class IntegrateCAV(nn.Module):
                 cav = layer_autoencoder.encode(cav).detach()
                 cavs_layer_tmp.append(cav)
             input_cavs.append(cavs_layer_tmp)
+            del layer_autoencoder # release memory
         return input_cavs
 
     def align_with_moco(self, queue_size, momentum, temperature, embed_dim=2048, epochs = 2000, overwrite=False,save_dir="./analysis"):
@@ -254,7 +255,7 @@ class IntegrateCAV(nn.Module):
                     aligned_cavs_layer.append(cav.cpu().numpy())
                 self.aligned_cavs.append(aligned_cavs_layer)
         print("CAVs aligned!")
-       
+        del model # release memory
         np.save(os.path.join(save_dir,"aligned_cavs.npy"), self.aligned_cavs)
         print("Aligned CAVs saved at", os.path.join(save_dir,"aligned_cavs.npy"))
         self.__isAligned = True

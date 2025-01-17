@@ -16,6 +16,7 @@ from scipy.stats import ttest_ind
 import tensorflow as tf
 import torch
 import torch.nn as nn
+from configs import alphas, concepts, bottlenecks, target
 torch.autograd.set_detect_anomaly(True)
 
 
@@ -150,18 +151,13 @@ cav_dir = working_dir + '/cavs/'
 save_path = "/p/realai/zhenghao/CAVFusion/analysis/" 
 # TODO: replace 'YOUR_PATH' with path to downloaded models and images. 
 source_dir = '/p/realai/zhenghao/CAVFusion/data'
-bottlenecks = [ 'mixed3a','mixed3b','mixed4a','mixed4b','mixed4c','mixed4d','mixed4e','mixed5a','mixed5b']  # @param 
+
 # bottlenecks = [ 'mixed3a']  # @param 
 if __name__ == "__main__":      
     utils.make_dir_if_not_exists(activation_dir)
     utils.make_dir_if_not_exists(working_dir)
     utils.make_dir_if_not_exists(cav_dir)
 
-    # this is a regularizer penalty parameter for linear classifier to get CAVs. 
-    alphas = [0.1]   
-
-    target = 'zebra'  
-    concepts = ["dotted","striped","zigzagged","animal","grass","lakeside","black","white","tiger","horse"]  # @param
 
     # Create TensorFlow session.
     sess = utils.create_session()
