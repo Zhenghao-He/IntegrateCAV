@@ -6,6 +6,7 @@ from align_dim import CAVAutoencoder
 # import tensorflow as tf
 import torch
 import pickle
+from tcav.cav import CAV
 save_dir = "/p/realai/zhenghao/CAVFusion/analysis/" 
 model_to_run = 'GoogleNet'
 
@@ -14,7 +15,7 @@ def save_cavs(concepts, bottleneck, cavs, save_path):
     save_dict = {
         'concepts': concepts,
         'bottleneck': bottleneck,
-        'hparams': None,
+        'hparams': CAV.default_hparams(),
         'accuracies': None,
         'cavs': cavs,
         'saved_path': save_path
@@ -37,6 +38,8 @@ if __name__ == "__main__":
 
     fuse_method="mean"
     cavs = np.load(os.path.join(save_dir,model_to_run,"cavs.npy"), allow_pickle=True)
+    
+    cav_hparams = CAV.default_hparams() # 暂时先这样吧 hhh
 
     autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim, device=device, save_dir=os.path.join(save_dir,model_to_run))
     fused_cavs = np.load(os.path.join(save_dir, model_to_run,"fuse_model", dim_align_method, fuse_method, "fused_cavs.npy"), allow_pickle=True)
@@ -48,7 +51,8 @@ if __name__ == "__main__":
         for fused_cav in fused_cavs:
             reconstructed = decoder(torch.tensor(fused_cav).to(device)).cpu().detach().numpy()
             reconstructed_cavs.append(reconstructed)
-        save_cavs(concepts, layer, reconstructed_cavs, os.path.join(reconstructed_save_dir, f"reconstructed_{layer}_cavs.pkl"))
+        save_path = os.path.join(reconstructed_save_dir, CAV.cav_key(concepts, layer, cav_hparams['model_type'], cav_hparams['alpha']).replace('/', '.') + '.pkl')
+        save_cavs(concepts, layer, reconstructed_cavs,save_path)
             
 
 
