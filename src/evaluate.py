@@ -14,13 +14,13 @@ import matplotlib.pyplot as plt
 from scipy.stats import ttest_ind
 
 import tensorflow as tf
+from align_dim import CAVAutoencoder
+from configs import alphas, concepts, bottlenecks, target, save_dir, dim_align_method, fuse_method, model_to_run, embed_dim, hidden_dims, dropout, device
 
-from configs import alphas, concepts, bottlenecks, target
 
 
-
-# tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
-tf.config.run_functions_eagerly(True)
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
+# tf.config.run_functions_eagerly(True)
 
 def plot_results(results, random_counterpart=None, random_concepts=None, num_random_exp=100, min_p_val=0.05, save_path="/p/realai/zhenghao/CAVFusion/analysis/"):
     # 打开日志文件
@@ -135,7 +135,7 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
         print(f"Plot saved to {pic_path}")
 
 # This is the name of your model wrapper (InceptionV3 and GoogleNet are provided in model.py)
-model_to_run = 'GoogleNet'  
+
 user = 'zhenghao'
 # the name of the parent directory that results are stored (only if you want to cache)
 project_name = 'tcav_class_test'
@@ -144,9 +144,15 @@ working_dir = "/tmp/" + user + '/' + project_name
 activation_dir =  working_dir+ '/activations/'
 # where CAVs are stored. 
 # You can say None if you don't wish to store any.
-cav_dir = "/p/realai/zhenghao/CAVFusion/analysis/GoolgeNet/reconstrcuted_cavs/autoencoder/mean/"
+original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
+cavs = np.load(os.path.join(original_cavs_path,"cavs.npy"), allow_pickle=True)
+
+
+autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout , device=device, save_dir=os.path.join(save_dir,model_to_run))
+
+cav_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params)
 # where the images live.
-save_path = "/p/realai/zhenghao/CAVFusion/analysis/" 
+save_path = save_dir
 # TODO: replace 'YOUR_PATH' with path to downloaded models and images. 
 source_dir = '/p/realai/zhenghao/CAVFusion/data'
 

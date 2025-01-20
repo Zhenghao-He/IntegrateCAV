@@ -175,16 +175,16 @@ class IntegrateCAV(nn.Module):
     def align_with_moco(self, queue_size, momentum, temperature, embed_dim=2048, epochs = 2000, overwrite=False,save_dir="./analysis"):
         save_dir = os.path.join(save_dir,"align_model", self.dim_align_method)
         if not overwrite :
-            if os.path.exists(os.path.join(save_dir,"aligned_cavs.npy")):
+            if os.path.exists(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy")):
                 print("Aligned CAVs already exist. Loading from saved files.")
-                self.aligned_cavs = np.load(os.path.join(save_dir,"aligned_cavs.npy"), allow_pickle=True)
+                self.aligned_cavs = np.load(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"), allow_pickle=True)
                 print("Aligned CAVs loaded!")
                 self.__isAligned = True
                 return self.aligned_cavs
-            elif os.path.exists(os.path.join(save_dir,"query_encoder.pth")):
+            elif os.path.exists(os.path.join(save_dir,f"query_encoder_{self.autoencoders.key_params}.pth")):
                 print("Model already exists. Loading from saved files.")
                 model = MoCoCAV(input_dim=embed_dim, embed_dim=embed_dim, cavs=self.cavs, queue_size=queue_size, momentum=momentum, temperature=temperature, device = self.device).to(self.device)
-                model.query_encoder.load_state_dict(torch.load(os.path.join(save_dir,"query_encoder.pth")))
+                model.query_encoder.load_state_dict(torch.load(os.path.join(save_dir,f"query_encoder_{self.autoencoders.key_params}.pth")))
                 model.query_encoder.eval()
                 with torch.no_grad():
                     for cavs_layer in self.cavs:
@@ -195,8 +195,8 @@ class IntegrateCAV(nn.Module):
                             aligned_cavs_layer.append(cav.cpu().numpy())
                         self.aligned_cavs.append(aligned_cavs_layer)
                 print("CAVs aligned!")
-                np.save(os.path.join(save_dir,"aligned_cavs.npy"), self.aligned_cavs)
-                print("Aligned CAVs saved at", os.path.join(save_dir,"aligned_cavs.npy"))
+                np.save(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"), self.aligned_cavs)
+                print("Aligned CAVs saved at", os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"))
                 self.__isAligned = True
                 return self.aligned_cavs
         else:
@@ -241,7 +241,7 @@ class IntegrateCAV(nn.Module):
             print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss:.4f}")
         
         os.makedirs(save_dir, exist_ok=True)
-        save_path  = os.path.join(save_dir,"query_encoder.pth")
+        save_path  = os.path.join(save_dir,f"query_encoder_{self.autoencoders.key_params}.pth")
         torch.save(model.query_encoder.state_dict(), save_path)
         print(f"Model saved to {save_path}")
 
@@ -256,8 +256,8 @@ class IntegrateCAV(nn.Module):
                 self.aligned_cavs.append(aligned_cavs_layer)
         print("CAVs aligned!")
         del model # release memory
-        np.save(os.path.join(save_dir,"aligned_cavs.npy"), self.aligned_cavs)
-        print("Aligned CAVs saved at", os.path.join(save_dir,"aligned_cavs.npy"))
+        np.save(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"), self.aligned_cavs)
+        print("Aligned CAVs saved at", os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"))
         self.__isAligned = True
         return self.aligned_cavs
 
@@ -270,9 +270,9 @@ class IntegrateCAV(nn.Module):
 
         save_dir = os.path.join(save_dir,"fuse_model", self.dim_align_method, fuse_method)
         if not overwrite:
-            if os.path.exists(os.path.join(save_dir,"fused_cavs.npy")):
+            if os.path.exists(os.path.join(save_dir,f"fused_cavs_{self.autoencoders.key_params}.npy")):
                 print("Fused CAVs already exist. Loading from saved files.")
-                self.fused_cavs = np.load(os.path.join(save_dir,"fused_cavs.npy"), allow_pickle=True)
+                self.fused_cavs = np.load(os.path.join(save_dir,f"fused_cavs_{self.autoencoders.key_params}.npy"), allow_pickle=True)
                 print("Fused CAVs loaded!")
                 return self.fused_cavs
         
@@ -283,8 +283,8 @@ class IntegrateCAV(nn.Module):
             raise NotImplementedError(f"Fuse method {fuse_method} is not implemented.")
         self.fused_cavs = fused_cavs # [num_concepts, cav_dim]
         os.makedirs(save_dir, exist_ok=True)
-        np.save(os.path.join(save_dir,"fused_cavs.npy"), fused_cavs)
-        print("Fused CAVs saved at", os.path.join(save_dir,"fused_cavs.npy"))
+        np.save(os.path.join(save_dir,f"fused_cavs_{self.autoencoders.key_params}.npy"), fused_cavs)
+        print("Fused CAVs saved at", os.path.join(save_dir,f"fused_cavs_{self.autoencoders.key_params}.npy"))
         return self.fused_cavs
 
     

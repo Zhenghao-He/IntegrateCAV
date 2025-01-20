@@ -14,14 +14,13 @@ import matplotlib.pyplot as plt
 from scipy.stats import ttest_ind
 
 import tensorflow as tf
-import torch
-import torch.nn as nn
-from configs import alphas, concepts, bottlenecks, target
-torch.autograd.set_detect_anomaly(True)
+
+from configs import alphas, concepts, bottlenecks, target, num_random_exp
 
 
-# tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
-tf.config.run_functions_eagerly(True)
+
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
+# tf.config.run_functions_eagerly(True)
 
 def plot_results(results, random_counterpart=None, random_concepts=None, num_random_exp=100, min_p_val=0.05, save_path="/p/realai/zhenghao/CAVFusion/analysis/"):
     # 打开日志文件
@@ -135,7 +134,7 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
         plt.savefig(pic_path)
         print(f"Plot saved to {pic_path}")
 
-# model = nn.Linear(10, 10).to("cuda")
+
 # This is the name of your model wrapper (InceptionV3 and GoogleNet are provided in model.py)
 model_to_run = 'GoogleNet'  
 user = 'zhenghao'
@@ -182,7 +181,7 @@ if __name__ == "__main__":
 
 
     absl.logging.set_verbosity(0)
-    num_random_exp=3
+    
 
 
     '''START TO ALIGN CAVS'''
