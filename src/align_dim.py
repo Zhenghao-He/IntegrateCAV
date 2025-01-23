@@ -19,8 +19,10 @@ def remove_module_prefix(state_dict):
 def augment_cavs(cavs, num_augments=10, noise_std=0.01):
     augmented = []
     for cav in cavs:
+        noise_std = np.std(cav)*0.1
         for _ in range(num_augments):
             noise = np.random.normal(0, noise_std, size=cav.shape)
+            # import pdb; pdb.set_trace()
             augmented.append(cav + noise)
     return np.array(augmented)
 
@@ -158,7 +160,7 @@ class CAVAutoencoder:
             
             # Augment and combine data
             layer_cavs = np.array([np.array(cav) for cav in layer_cavs])
-            aug_cav = augment_cavs(layer_cavs, num_augments=10, noise_std=0.01)
+            aug_cav = augment_cavs(layer_cavs, num_augments=1000, noise_std=0.1)
             # import pdb; pdb.set_trace()
             layer_cavs = np.concatenate((layer_cavs, aug_cav), axis=0)
             # np.save(os.path.join(self.save_dir, f"layer_{layer_idx}_augmented_cavs.npy"), layer_cavs)
@@ -172,7 +174,7 @@ class CAVAutoencoder:
             for epoch in range(epochs):
                 epoch_loss = 0.0
                 for batch_idx, (batch_cavs,) in enumerate(dataloader):
-                    batch_cavs = batch_cavs.cuda()  # Move batch to GPU
+                    batch_cavs = batch_cavs.to(self.device)  # Move batch to GPU
                     
                     optimizer.zero_grad()
                     

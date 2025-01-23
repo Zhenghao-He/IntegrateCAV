@@ -17,7 +17,7 @@ def get_cavs(concepts, bottlenecks, cav_dir=None):
                 with open(file, 'rb') as f:
                     data = pickle.load(f)
                 cav = data['cavs'][0] # use the first CAV
-                import pdb;pdb.set_trace()
+                # import pdb;pdb.set_trace()
                 cavs_layer.append(cav)
         cavs_instances.append(cavs_layer)
     return cavs_instances
@@ -32,4 +32,4 @@ if __name__ == "__main__":
     cavs_array = np.array(cavs, dtype=object)
     np.save(os.path.join(original_cavs_path, "cavs.npy"), cavs_array)
 
-    import pdb;pdb.set_trace()
+    # import pdb;pdb.set_trace()
