@@ -4,7 +4,12 @@ import torch.nn.functional as F
 import numpy as np
 import os
 import json
+
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
 from torch.utils.data import DataLoader, TensorDataset
+
 def remove_module_prefix(state_dict):
     """
     Remove the 'module.' prefix from keys in the state_dict
@@ -95,7 +100,7 @@ class SingleLayerAutoencoder(nn.Module):
         return self.decoder(embedded)
 
 class CAVAutoencoder:
-    def __init__(self, input_dims, embed_dim, device, save_dir, hidden_dims=[4096, 4096], dropout=0.1):
+    def __init__(self, input_dims, embed_dim, device, save_dir, hidden_dims=[4096, 4096], dropout=0.1, overwrite=False):
         """
         Args:
             input_dims: list of input dimensions for each layer
@@ -111,6 +116,7 @@ class CAVAutoencoder:
         self.hidden_dims = hidden_dims
         self.dropout = dropout
         self.key_params = json.dumps(self.hidden_dims+[self.embed_dim]).replace(' ', '') + f"_{self.dropout}"
+        self.overwrite = overwrite
 
     def get_autoencoder(self, layer_idx):
         """
@@ -130,7 +136,7 @@ class CAVAutoencoder:
         return autoencoder
         
 
-    def train_autoencoders(self, cavs, overwrite, epochs=50, lr=1e-3, batch_size=32):
+    def train_autoencoders(self, cavs, epochs=50, lr=1e-3, batch_size=32):
         """
         Train each layer's Autoencoder.
         Args:
@@ -149,7 +155,7 @@ class CAVAutoencoder:
         loss_fn = CosineSimilarityLoss()
 
         for layer_idx, (autoencoder, layer_cavs) in enumerate(zip(self.autoencoders, cavs)):
-            if not overwrite and os.path.exists(os.path.join(self.save_dir, f"autoencoder_layer_{layer_idx}_{self.key_params}.pth")):
+            if not self.overwrite and os.path.exists(os.path.join(self.save_dir, f"autoencoder_layer_{layer_idx}_{self.key_params}.pth")):
                 print(f"Autoencoder for Layer {layer_idx + 1} already trained.")
                 self.__isTrained[layer_idx] = True
                 continue

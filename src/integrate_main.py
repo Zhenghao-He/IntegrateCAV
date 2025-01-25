@@ -3,7 +3,7 @@ import numpy as np
 import os
 import torch.autograd
 from align_dim import CAVAutoencoder
-from configs import embed_dim, hidden_dims, dropout, dim_align_method, fuse_method, model_to_run, save_dir, num_random_exp
+from configs import embed_dim, hidden_dims, dropout, dim_align_method, fuse_method, model_to_run, save_dir, num_random_exp,concepts_string
 torch.autograd.set_detect_anomaly(True)
 
 
@@ -16,17 +16,18 @@ if __name__ == "__main__":
 
 
     original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
-    cavs = np.load(os.path.join(original_cavs_path,"cavs.npy"), allow_pickle=True)
+    cavs = np.load(os.path.join(original_cavs_path,f"cavs_{concepts_string}.npy"), allow_pickle=True)
     # import pdb; pdb.set_trace()
   
-    autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout, device=device, save_dir=os.path.join(save_dir,model_to_run))
-    autoencoders.train_autoencoders(cavs=cavs, overwrite=False, epochs=10, batch_size=32) #train autoencoder/ we need decoders to reconstruct the cavs for each layer
+    autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout, device=device, save_dir=os.path.join(save_dir,model_to_run), overwrite=False)
+    autoencoders.train_autoencoders(cavs=cavs, epochs=10, batch_size=32) #train autoencoder/ we need decoders to reconstruct the cavs for each layer
     # raise ValueError("stop here")
-    integrate_cav = IntegrateCAV(cavs=cavs, device=device, autoencoders=autoencoders,dim_align_method=dim_align_method,num_random_exp=num_random_exp).to(device)
+    integrate_cav = IntegrateCAV(cavs=cavs, device=device, autoencoders=autoencoders,dim_align_method=dim_align_method,num_random_exp=num_random_exp,save_dir=os.path.join(save_dir,model_to_run)).to(device)
     # align before fusion
-    aligned_cavs = integrate_cav.align_with_moco(queue_size=100, momentum=0.999, temperature=0.07, embed_dim=embed_dim,overwrite=False, epochs=3000,save_dir=os.path.join(save_dir,model_to_run))
-
-    fused_cavs = integrate_cav.fuse(fuse_method=fuse_method, overwrite=overwrite, save_dir=os.path.join(save_dir,model_to_run))
+    # aligned_cavs = integrate_cav.align_with_moco(queue_size=100, momentum=0.999, temperature=0.07, embed_dim=embed_dim,overwrite=overwrite, epochs=1000)
+    aligned_cavs = integrate_cav.train(embed_dim=embed_dim,overwrite=overwrite, epochs=1000, batch_size=128, lr=2e-3)
+    import pdb; pdb.set_trace()
+    fused_cavs = integrate_cav.fuse(fuse_method=fuse_method, overwrite=overwrite)
 
     '''
     TODO:
