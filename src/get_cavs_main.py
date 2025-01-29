@@ -137,7 +137,7 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
 
 # This is the name of your model wrapper (InceptionV3 and GoogleNet are provided in model.py)
 model_to_run = 'GoogleNet'  
-user = 'zhenghao'
+user = 'new'
 # the name of the parent directory that results are stored (only if you want to cache)
 project_name = 'tcav_class_test'
 working_dir = "/tmp/" + user + '/' + project_name
@@ -145,7 +145,7 @@ working_dir = "/tmp/" + user + '/' + project_name
 activation_dir =  working_dir+ '/activations/'
 # where CAVs are stored. 
 # You can say None if you don't wish to store any.
-cav_dir = working_dir + '/cavs/'
+cav_dir = "/p/realai/zhenghao/CAVFusion/analysis/GoogleNet/original_cavs"
 # where the images live.
 save_path = "/p/realai/zhenghao/CAVFusion/analysis/" 
 # TODO: replace 'YOUR_PATH' with path to downloaded models and images. 
@@ -186,16 +186,16 @@ if __name__ == "__main__":
 
     '''START TO ALIGN CAVS'''
 
-    # 
-    cavs = get_cavs(concepts=concepts, bottlenecks=bottlenecks,activation_generator=act_generator, cav_dir=cav_dir, cav_hparams=None, overwrite=False)
+    # # 
+    # cavs = get_cavs(concepts=concepts, bottlenecks=bottlenecks,activation_generator=act_generator, cav_dir=cav_dir, cav_hparams=None, overwrite=False)
 
-    # cavs_array = np.array(cavs)
-    cavs_array = np.array(cavs, dtype=object)
+    # # cavs_array = np.array(cavs)
+    # cavs_array = np.array(cavs, dtype=object)
 
 
-    np.save(os.path.join(save_path,model_to_run,"cavs.npy"), cavs_array)
+    # np.save(os.path.join(save_path,model_to_run,"cavs.npy"), cavs_array)
 
-    raise ValueError("stop here")
+    # raise ValueError("stop here")
     ## only running num_random_exp = 10 to save some time. The paper number are reported for 500 random runs. 
     mytcav = tcav.TCAV(sess,
                     target,
@@ -210,4 +210,4 @@ if __name__ == "__main__":
     results = mytcav.run(run_parallel=False)
     print('done!')
     utils_plot.plot_results=plot_results # plot to file
-    utils_plot.plot_results(results, num_random_exp=num_random_exp,save_path="/p/realai/zhenghao/CAVFusion/analysis/" + model_to_run)
+    utils_plot.plot_results(results, num_random_exp=num_random_exp,save_path="/p/realai/zhenghao/CAVFusion/analysis/GoogleNet/original_results")

@@ -20,13 +20,13 @@ if __name__ == "__main__":
     # import pdb; pdb.set_trace()
   
     autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout, device=device, save_dir=os.path.join(save_dir,model_to_run), overwrite=False)
-    autoencoders.train_autoencoders(cavs=cavs, epochs=10, batch_size=32) #train autoencoder/ we need decoders to reconstruct the cavs for each layer
+    autoencoders.train_autoencoders(cavs=cavs, epochs=40, batch_size=32) #train autoencoder/ we need decoders to reconstruct the cavs for each layer
     # raise ValueError("stop here")
     integrate_cav = IntegrateCAV(cavs=cavs, device=device, autoencoders=autoencoders,dim_align_method=dim_align_method,num_random_exp=num_random_exp,save_dir=os.path.join(save_dir,model_to_run)).to(device)
     # align before fusion
     # aligned_cavs = integrate_cav.align_with_moco(queue_size=100, momentum=0.999, temperature=0.07, embed_dim=embed_dim,overwrite=overwrite, epochs=1000)
-    aligned_cavs = integrate_cav.train(embed_dim=embed_dim,overwrite=overwrite, epochs=1000, batch_size=128, lr=2e-3)
-    import pdb; pdb.set_trace()
+    aligned_cavs = integrate_cav.train(embed_dim=embed_dim,overwrite=False, epochs=1000, batch_size=32, lr=1e-5)
+    # import pdb; pdb.set_trace()
     fused_cavs = integrate_cav.fuse(fuse_method=fuse_method, overwrite=overwrite)
 
     '''

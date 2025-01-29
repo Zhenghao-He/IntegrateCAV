@@ -15,7 +15,7 @@ from scipy.stats import ttest_ind
 
 import tensorflow as tf
 from align_dim import CAVAutoencoder
-from configs import alphas, concepts, bottlenecks, target, save_dir, dim_align_method, fuse_method, model_to_run, embed_dim, hidden_dims, dropout, device
+from configs import alphas, concepts, bottlenecks, target, save_dir, dim_align_method, fuse_method, model_to_run, embed_dim, hidden_dims, dropout, device, num_random_exp, concepts_string
 
 
 
@@ -145,7 +145,7 @@ activation_dir =  working_dir+ '/activations/'
 # where CAVs are stored. 
 # You can say None if you don't wish to store any.
 original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
-cavs = np.load(os.path.join(original_cavs_path,"cavs.npy"), allow_pickle=True)
+cavs = np.load(os.path.join(original_cavs_path,f"cavs_{concepts_string}.npy"), allow_pickle=True)
 
 
 autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout , device=device, save_dir=os.path.join(save_dir,model_to_run))
@@ -186,7 +186,6 @@ if __name__ == "__main__":
 
 
     absl.logging.set_verbosity(0)
-    num_random_exp=3
     ## only running num_random_exp = 10 to save some time. The paper number are reported for 500 random runs. 
     mytcav = tcav.TCAV(sess,
                     target,

@@ -166,7 +166,7 @@ class CAVAutoencoder:
             
             # Augment and combine data
             layer_cavs = np.array([np.array(cav) for cav in layer_cavs])
-            aug_cav = augment_cavs(layer_cavs, num_augments=1000, noise_std=0.1)
+            aug_cav = augment_cavs(layer_cavs, num_augments=10, noise_std=0.1)
             # import pdb; pdb.set_trace()
             layer_cavs = np.concatenate((layer_cavs, aug_cav), axis=0)
             # np.save(os.path.join(self.save_dir, f"layer_{layer_idx}_augmented_cavs.npy"), layer_cavs)

@@ -14,13 +14,15 @@ if __name__ == "__main__":
     overwrite = True
 
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
     
     original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
     cavs = np.load(os.path.join(original_cavs_path,f"cavs_{concepts_string}.npy"), allow_pickle=True)
 
 
     autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout , device=device, save_dir=os.path.join(save_dir,model_to_run), overwrite=False)
+    
+    
     # fused_cavs = np.load(os.path.join(save_dir, model_to_run,"fuse_model", dim_align_method, fuse_method, f"fused_cavs_{autoencoders.key_params}.npy"), allow_pickle=True)
     # # import pdb; pdb.set_trace()
     # reconstructed_save_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params)
@@ -33,7 +35,7 @@ if __name__ == "__main__":
     #         reconstructed = decoder(torch.tensor(fused_cav).to(device)).cpu().detach().numpy()
     #         random_part = f"random500_{index % num_random_exp}"
     #         concept = concepts[concept_idx//num_random_exp]
-    #         pattern = f"**/{concept}*{random_part}*{bottleneck}*"
+    #         pattern = f"**/{concept}*{random_part}-{bottleneck}*"
     #         search_path = os.path.join(original_cavs_path, pattern)
     #         file = glob.glob(search_path, recursive=True)
     #         if len(file) > 1:
@@ -65,7 +67,7 @@ if __name__ == "__main__":
             random_part = f"random500_{index % num_random_exp}"
             # import pdb; pdb.set_trace()
             concept = concepts[concept_idx//num_random_exp]
-            pattern = f"**/{concept}*{random_part}*{bottleneck}*"
+            pattern = f"**/{concept}*{random_part}-{bottleneck}*"
             search_path = os.path.join(original_cavs_path, pattern)
             file = glob.glob(search_path, recursive=True)
             if len(file) > 1:
@@ -77,6 +79,9 @@ if __name__ == "__main__":
                 data = pickle.load(f)
             data['cavs'][0] = reconstructed
             data['cavs'][1] = -reconstructed
+            # data['cavs'][0] = np.zeros_like(data['cavs'][0])
+            # data['cavs'][1] = np.zeros_like(data['cavs'][1])
+            # import pdb; pdb.set_trace()
             data['saved_path'] = os.path.join(reconstructed_save_dir, file_name)
             with open(data['saved_path'], 'wb') as f:
                 pickle.dump(data, f)
