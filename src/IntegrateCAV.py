@@ -10,9 +10,8 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import accuracy_score
 import random
 from align_dim import augment_cavs
-from configs import concepts, bottlenecks, num_random_exp, target
+# from configs import num_random_exp
 
-from multiprocessing import dummy as multiprocessing
 def normalize_tensor(x, eps=1e-8):
     """
     标准化单个张量。
@@ -42,45 +41,7 @@ def normalize_cav(cavs, eps=1e-8):
         result.append(tmp)
     return result
 
-def my_compute_tcav(mymodel, target_class, cav, class_acts, examples, bottleneck, run_parallel=True, num_workers=20):
-    count = 0
-    class_id = mymodel.label_to_id(target_class)
-    if run_parallel:
-      pool = multiprocessing.Pool(num_workers)
-      directions = pool.map(
-          lambda i: get_direction_dir_sign(
-              mymodel, np.expand_dims(class_acts[i], 0),
-              cav, class_id, examples[i], bottleneck),
-          range(len(class_acts)))
-      return sum(directions) / float(len(class_acts))
-    else:
-      for i in range(len(class_acts)):
-        act = np.expand_dims(class_acts[i], 0)
-        example = examples[i]
-        if get_direction_dir_sign(
-            mymodel, act, cav, class_id, example, bottleneck):
-          count += 1
-      return float(count) / float(len(class_acts))
 
-def get_direction_dir_sign(mymodel, act, cav, class_id, example, bottleneck):
-    """Get the sign of directional derivative.
-
-    Args:
-        mymodel: a model class instance
-        act: activations of one bottleneck to get gradient with respect to.
-        cav: an instance of cav
-        concept: one concept
-        class_id: index of the class of interest (target) in logit layer.
-        example: example corresponding to the given activation
-
-    Returns:
-        sign of the directional derivative
-    """
-    # Grad points in the direction which DECREASES probability of class
-    grad = np.reshape(mymodel.get_gradient(
-        act, [class_id], bottleneck, example), -1)
-    dot_prod = np.dot(grad, cav)
-    return dot_prod < 0
 
   
 
@@ -143,75 +104,6 @@ def prepare_batch(cavs,device,num_random_exp=3,batch_size=2):
 
 
 
-# class OrthogonalTransformer(nn.Module):
-#     def __init__(self, input_dim, embed_dim, num_heads=4, ff_dim=256, dropout=0.1):
-#         """
-#         Replaces the fully connected layer with a simplified Transformer block.
-#         - input_dim: Dimension of input features.
-#         - embed_dim: Dimension of the output embedding.
-#         - num_heads: Number of attention heads.
-#         - ff_dim: Dimension of the feed-forward layer.
-#         - dropout: Dropout probability.
-#         """
-#         super(OrthogonalTransformer, self).__init__()
-#         self.embed_dim = embed_dim
-
-#         # Multi-Head Self-Attention
-#         self.self_attention = nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
-        
-#         # Feed-Forward Network
-#         self.ffn = nn.Sequential(
-#             nn.Linear(embed_dim, ff_dim),
-#             nn.ReLU(),
-#             nn.Dropout(dropout),
-#             nn.Linear(ff_dim, embed_dim)
-#         )
-
-#         # Normalization layers
-#         self.norm1 = nn.LayerNorm(embed_dim)
-#         self.norm2 = nn.LayerNorm(embed_dim)
-
-#         # Positional encoding (optional for transformer-like structure)
-#         self.positional_encoding = nn.Parameter(torch.zeros(1, 1, embed_dim))
-
-#     def forward(self, x):
-#         # Expand input to match the embedding dimension
-#         if x.size(-1) != self.embed_dim:
-#             x = nn.Linear(x.size(-1), self.embed_dim)(x)
-        
-#         # Add positional encoding
-#         x = x + self.positional_encoding
-        
-#         # Self-Attention layer with residual connection
-#         attn_output, _ = self.self_attention(x, x, x)
-#         x = self.norm1(x + attn_output)
-        
-#         # Feed-Forward Network with residual connection
-#         ffn_output = self.ffn(x)
-#         x = self.norm2(x + ffn_output)
-
-#         # Normalize the output embeddings
-#         return F.normalize(x, dim=-1)
-
-#     def orthogonal_regularization(self, weight_decay=1e-1):
-#         """
-#         Apply orthogonal regularization to the weight matrices of the attention and FFN.
-#         """
-#         loss = 0.0
-
-#         # Regularize the projection matrices of Multi-Head Attention
-#         for weight in [self.self_attention.in_proj_weight, 
-#                        self.self_attention.out_proj.weight]:
-#             W = weight
-#             loss += torch.norm(torch.mm(W, W.T) - torch.eye(W.size(0), device=W.device))
-
-#         # Regularize the feed-forward network weights
-#         for layer in self.ffn:
-#             if isinstance(layer, nn.Linear):
-#                 W = layer.weight
-#                 loss += torch.norm(torch.mm(W, W.T) - torch.eye(W.size(0), device=W.device))
-
-#         return weight_decay * loss
 
 
 class TransformerQueryEncoder(nn.Module):
@@ -333,75 +225,7 @@ class CAVAlignmentModel(nn.Module):
         projected_x = self.projection(x)
         residual_x = self.residual_proj(x)  # 确保维度匹配
         return F.normalize(projected_x + residual_x, dim=-1)
-# class CAVAlignmentModel(nn.Module):
-#     def __init__(self, input_dim=2048, hidden_dim=1024, output_dim=256):
-#         super().__init__()
-#         self.projection = nn.Sequential(
-#             nn.Linear(input_dim,8196),
-#             nn.LayerNorm(8196),  # 替换BatchNorm为LayerNorm
-#             nn.GELU(),                 # 更平滑的激活函数
-#             nn.Linear(8196, 16392),
-#             nn.LayerNorm(16392),
-#             nn.GELU(),                 # 更平滑的激活函数
-#             nn.Linear(16392, 16392),
-#             nn.LayerNorm(16392),
-#             nn.GELU(),
-#             nn.Linear(16392, output_dim)
-#         )
-    
-#     def forward(self, x):
-#         return F.normalize(self.projection(x), dim=-1)+x
-    
-# class CAVAlignmentModel(nn.Module):
-#     def __init__(self, input_dim=2048, hidden_dim=1024, output_dim=256, num_layers=4, num_heads=8, dropout=0.1):
-#         super().__init__()
-        
-#         # 多层投影网络
-#         self.projection = nn.Sequential(
-#             nn.Linear(input_dim, hidden_dim),
-#             nn.LayerNorm(hidden_dim),
-#             nn.GELU(),
-#             *self._make_layers(hidden_dim, num_layers, dropout),  # 添加多个残差块
-#             nn.Linear(hidden_dim, output_dim)
-#         )
-        
-#         # 多头注意力机制（用于跨模态交互）
-#         self.cross_attention = nn.MultiheadAttention(embed_dim=output_dim, num_heads=num_heads, dropout=dropout)
-        
-#         # 最终的归一化层
-#         self.final_norm = nn.LayerNorm(output_dim)
-        
-#         # Dropout 正则化
-#         self.dropout = nn.Dropout(dropout)
-    
-#     def _make_layers(self, hidden_dim, num_layers, dropout):
-#         layers = []
-#         for _ in range(num_layers):
-#             # 残差块
-#             layers.append(ResidualBlock(hidden_dim, dropout))
-#         return layers
-#     def forward(self, x):
-#         """
-#         前向传播逻辑：
-#         1. 将输入特征通过多层投影网络映射到低维空间。
-#         2. 使用自注意力机制捕捉特征内部依赖。
-#         3. 添加残差连接和归一化。
-#         4. 返回归一化后的特征。
-#         """
-#         # 1. 投影到低维空间
-#         x = self.projection(x)  # [batch_size, output_dim]
-        
-#         # 2. 自注意力机制（增加序列维度）
-#         x = x.unsqueeze(1)  # [batch_size, seq_len=1, output_dim]
-#         attn_output, _ = self.cross_attention(x, x, x)  # 自注意力（query=key=value=x）
-#         x = x + self.dropout(attn_output)  # 残差连接 + Dropout
-#         x = x.squeeze(1)  # 移除序列维度 [batch_size, output_dim]
-        
-#         # 3. 最终归一化
-#         x = self.final_norm(x)
-        
-#         # 4. 归一化输出
-#         return F.normalize(x, dim=-1)
+
 
 
 class ResidualBlock(nn.Module):
@@ -420,48 +244,7 @@ class ResidualBlock(nn.Module):
     
     def forward(self, x):
         return x + self.block(x)  # 残差连接
-# class CAVAlignmentModel(nn.Module):
-#     def __init__(self, input_dim=2048, hidden_dim=1024, output_dim=256, num_layers=8, dropout=0.1):
-#         super().__init__()
-        
-#         # 输入投影层
-#         self.input_proj = nn.Sequential(
-#             nn.Linear(input_dim, hidden_dim),
-#             nn.LayerNorm(hidden_dim),
-#             nn.GELU(),
-#             nn.Dropout(dropout)
-#         )
-        
-#         # 多层残差网络
-#         self.residual_layers = nn.Sequential(
-#             *[ResidualBlock(hidden_dim, dropout) for _ in range(num_layers)]
-#         )
-        
-#         # 输出投影层
-#         self.output_proj = nn.Sequential(
-#             nn.Linear(hidden_dim, output_dim),
-#             nn.LayerNorm(output_dim)
-#         )
-    
-#     def forward(self, x):
-#         """
-#         前向传播逻辑：
-#         1. 将输入特征投影到隐藏空间。
-#         2. 通过多层残差网络增强特征表达能力。
-#         3. 投影到输出空间。
-#         4. 返回归一化后的特征。
-#         """
-#         # 1. 输入投影
-#         x = self.input_proj(x)  # [batch_size, hidden_dim]
-        
-#         # 2. 多层残差网络
-#         x = self.residual_layers(x)  # [batch_size, hidden_dim]
-        
-#         # 3. 输出投影
-#         x = self.output_proj(x)  # [batch_size, output_dim]
-        
-#         # 4. 归一化输出
-#         return F.normalize(x, dim=-1)
+
 class ProjectionHead(nn.Module):
     def __init__(self, input_dim, proj_dim=256):
         super(ProjectionHead, self).__init__()
@@ -474,40 +257,121 @@ class ProjectionHead(nn.Module):
     
     def forward(self, x):
         return self.net(x) + x
-    
+
+
+
 class TCAVLoss(nn.Module):
     """
-    Loss function to minimize TCAV values' variance across layers.
+    改进后的损失函数：层间方差 + 概念中心分离
     """
-    def __init__(self, target=None):
+    def __init__(self, device, num_concepts, var_weight=0.5, similarity_weight=1, margin=0.3):
         super(TCAVLoss, self).__init__()
-        self.target = target  # Optional target TCAV distribution
+        self.device = device
+        self.var_weight = var_weight      # 层间方差损失权重
+        self.similarity_weight = similarity_weight # 概念中心分离权重
+        
+        # 动态温度参数
+        self.temperature = 1.0  
+        self.temperature_growth_rate = 1.2  
+        self.temperature_max = 1000.0
+        
+        # 概念中心损失参数
+        self.num_concepts = num_concepts
+        self.margin = margin  # 不同概念中心最小间距
+        # self.centers = nn.Parameter(torch.randn(num_concepts, 1)).to(device)  # 每个概念的 TCAV 目标中心
 
-    def forward(self, fused_cav, autoencoders, class_acts_layer, class_examples, target, mymodel, bottlenecks):
+    def forward(self, input, fused_cav, decoders, class_acts_layer, class_examples, target, mymodel, bottlenecks, concept_labels):
         """
-        Compute the loss for TCAV values.
+        Args:
+            fused_cav: [batch_size, cav_dim] 融合后的概念向量
+            concept_labels: [batch_size] 每个样本的概念标签（整数索引）
+        """
+        # === 动态温度更新 ===
+        self.temperature = min(self.temperature * self.temperature_growth_rate, self.temperature_max)
+
+        # === 计算层间 TCAV 方差损失 ===
+        tcav_values = []
+        similarity_loss = 0
+        for layer_idx, bottleneck in enumerate(bottlenecks):
+            decoder = decoders[layer_idx]
+            reconstructed = decoder(fused_cav)  # [batch_size, cav_dim] → [batch_size, cav_dim]
+            cav = reconstructed.requires_grad_(True)
+            input_cav = decoder(input[:, layer_idx, :])
+            cosine_sim = F.cosine_similarity(input_cav, cav, dim=1) # [batch_size, num_layers]
+            sim_loss = (1 - cosine_sim).mean(dim=0).mean()  # 余弦相似度约束
+            similarity_loss += sim_loss
+            # 计算当前层的 TCAV 值 [batch_size]
+            layer_tcav = self.my_compute_tcav(
+                mymodel=mymodel, 
+                target_class=target, 
+                cav=cav, 
+                class_acts=class_acts_layer[bottleneck], 
+                examples=class_examples, 
+                bottleneck=bottleneck,
+                device=self.device, 
+                temperature=self.temperature
+            )
+            tcav_values.append(layer_tcav)
+        # === 余弦相似度约束项 ===
+        similarity_loss /= len(bottlenecks)
+        # 层间方差损失 [batch_size] → scalar
+        tcav_matrix = torch.stack(tcav_values)  # [num_layers, batch_size]
+        consistency_loss = tcav_matrix.var(dim=0).mean()  # 沿层维度计算方差，然后取批次均值
+        print("Consistency Loss:", consistency_loss.item(), "Similarity Loss:", similarity_loss.item())
+        # === 组合损失 ===
+        total_loss = (
+            self.var_weight * consistency_loss + 
+            self.similarity_weight * similarity_loss
+        )
+        print("Total Loss:", total_loss)
+        return total_loss
+    
+    def my_compute_tcav(self, mymodel, target_class, cav, class_acts, examples, bottleneck, device, temperature=10):
+        """
+        计算 TCAV 方向性，并确保计算图不断开（逐样本计算）。
         
         Args:
-            tcav_values: Tensor of shape [num_layers], TCAV values for each layer.
-        Returns:
-            loss: Scalar loss value.
-        """
-        # Standard deviation loss
-        tcav_values = []
-        # for layer_idx in range(len(autoencoders)):
+            mymodel: 目标模型
+            target_class: 目标类别
+            cav: (torch.Tensor) CAV 向量
+            class_acts: (list or torch.Tensor) 每个样本的激活值
+            examples: 样本数据
+            bottleneck: 指定的层
+            device: 计算设备 (cuda 或 cpu)
             
+        Returns:
+            tcav_score: (torch.Tensor) 方向性得分 (用于反向传播)
+        """
+        class_id = mymodel.label_to_id(target_class)
+        cav = cav.to(device) 
         
-        for layer_idx, bottleneck in enumerate(bottlenecks):
-            decoder = autoencoders.load_autoencoder(layer_idx).decode
-            reconstructed = decoder(torch.tensor(fused_cav).to(self.device))
-            cav = reconstructed.cpu().detach().numpy() # just a numpy array
-            result = my_compute_tcav(mymodel=mymodel, target_class=target, cav=cav, class_acts=class_acts_layer[bottleneck], examples=class_examples, bottleneck=bottleneck)
-            tcav_values.append(result)
-        tcav_values = np.array(tcav_values)
-        loss = tcav_values.var()
+        count = 0
+        total_samples = len(class_acts)
+        
+        tcav_scores = [] 
+        
+        for i in range(total_samples):
+            act = np.expand_dims(class_acts[i], 0)
+            example = examples[i]
+            
+            # 计算该样本的梯度
+            grad = mymodel.get_gradient(act, [class_id], bottleneck, example)
+            grad = torch.tensor(grad, dtype=torch.float32, device=device).view(-1)  # 确保梯度形状匹配
+            
+            # 计算点积
+            # dot_prod = torch.dot(grad, cav) 
+            cos_sim = F.cosine_similarity(grad.unsqueeze(0), cav, dim=1) 
+ 
+            # 计算方向性，并存入列表
+            soft_tcav = torch.sigmoid(-cos_sim * temperature) 
+            hard_tcav = (cos_sim<0).float()
+            tcav_score = hard_tcav.detach() + (soft_tcav - soft_tcav.detach())
+            tcav_scores.append(tcav_score)
+        
+        tcav_score = torch.stack(tcav_scores).mean(dim=0)  # 计算负向梯度比例
+        
+        return tcav_score
 
-
-        return loss 
 
  
 class AttentionFusion(nn.Module):
@@ -538,27 +402,23 @@ class AttentionFusion(nn.Module):
         fused_cav = torch.einsum("lb,lbd->bd", weights, values)  # Shape: [batch_size, embed_dim]
         return fused_cav
 
+
 class TransformerCAVFusion(nn.Module):
     def __init__(self, embedding_dim, num_layers, num_heads=4, ff_dim=256, dropout=0.1):
-        """
-        Transformer-based model for CAV fusion.
-        
-        Args:
-            embedding_dim: Dimension of the concept embedding (CAV).
-            num_layers: Number of Transformer layers to fuse.
-            num_heads: Number of attention heads in the Transformer.
-            ff_dim: Feed-forward network dimension.
-            dropout: Dropout rate.
-        """
         super(TransformerCAVFusion, self).__init__()
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
 
-        # Positional encoding for layer indices
+        # Positional encoding for layer indices [num_layers, embedding_dim]
         self.position_encoding = nn.Parameter(torch.randn(num_layers, embedding_dim))
 
-        # Transformer Encoder Block
-        self.attention_layer = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=num_heads, dropout=dropout)
+        # Transformer Encoder Components
+        self.attention_layer = nn.MultiheadAttention(
+            embed_dim=embedding_dim, 
+            num_heads=num_heads, 
+            dropout=dropout,
+            batch_first=True  # 关键修改：启用 batch_first
+        )
         self.ffn = nn.Sequential(
             nn.Linear(embedding_dim, ff_dim),
             nn.ReLU(),
@@ -568,33 +428,39 @@ class TransformerCAVFusion(nn.Module):
         self.layer_norm2 = nn.LayerNorm(embedding_dim)
         self.dropout = nn.Dropout(dropout)
 
-        # Output layer for fusion
+        # Output layer
         self.output_layer = nn.Linear(embedding_dim, embedding_dim)
 
     def forward(self, cav_embeddings):
         """
-        Forward pass for CAV fusion.
-        
         Args:
-            cav_embeddings: Tensor of shape [num_layers, embedding_dim].
-        
+            cav_embeddings: [batch_size, num_layers, embedding_dim]
         Returns:
-            Fused global concept vector of shape [embedding_dim].
+            fused_cav: [batch_size, embedding_dim]
         """
-        # Add positional encoding
-        cav_embeddings = cav_embeddings + self.position_encoding
+        batch_size = cav_embeddings.size(0)
+        
+        # 1. 添加位置编码 [num_layers, embedding_dim] → [batch_size, num_layers, embedding_dim]
+        position_encoding = self.position_encoding.unsqueeze(0).expand(batch_size, -1, -1)
+        cav_embeddings = cav_embeddings + position_encoding
 
-        # Self-attention mechanism
-        attn_output, _ = self.attention_layer(cav_embeddings, cav_embeddings, cav_embeddings)
+        # 2. 自注意力层（注意 batch_first=True 确保输入为 [batch, seq, dim]）
+        attn_output, _ = self.attention_layer(
+            query=cav_embeddings, 
+            key=cav_embeddings, 
+            value=cav_embeddings
+        )
         cav_embeddings = self.layer_norm1(cav_embeddings + self.dropout(attn_output))
 
-        # Feed-forward network
+        # 3. 前馈网络
         ffn_output = self.ffn(cav_embeddings)
         fused_embeddings = self.layer_norm2(cav_embeddings + self.dropout(ffn_output))
 
-        # Average pooling to get a global representation
-        global_cav = fused_embeddings.mean(dim=0)
+        # 4. 沿层维度平均池化 [batch, num_layers, dim] → [batch, dim]
+        global_cav = fused_embeddings.mean(dim=1)
+        
         return self.output_layer(global_cav)
+
 
 class MoCoCAV(nn.Module):
     def __init__(self, input_dim, embed_dim, cavs, queue_size=4096, momentum=0.999, temperature=0.07, device = "cuda"):
@@ -783,7 +649,7 @@ class IntegrateCAV(nn.Module):
                     cav = torch.tensor(cav).to(self.device)
                     layer_cavs_tmp.append(cav)
                 tmp.append(layer_cavs_tmp)
-            print("Aligned CAVs loaded!")
+            print("Input CAVs loaded!")
             return tmp
         input_cavs = []
         for layer_idx, cavs_layer in enumerate(self.cavs):
@@ -807,7 +673,7 @@ class IntegrateCAV(nn.Module):
         save_cavs = np.array(save_cavs)
         # import pdb; pdb.set_trace()
         np.save(os.path.join(save_dir,f"input_cavs_{self.autoencoders.key_params}.npy"),  save_cavs)
-        print("Aligned CAVs saved at", os.path.join(save_dir,f"input_cavs_{self.autoencoders.key_params}.npy"))
+        print("Input CAVs saved at", os.path.join(save_dir,f"input_cavs_{self.autoencoders.key_params}.npy"))
         if type == "fuse":
             return save_cavs
         return input_cavs
@@ -976,34 +842,24 @@ class IntegrateCAV(nn.Module):
                 self.__isAligned = True
                 return self.aligned_cavs
         model = CAVAlignmentModel(input_dim=embed_dim, hidden_dim=4096, output_dim=embed_dim).to(self.device) # , input_dim=2048, hidden_dim=1024, output_dim=256
-        # model = CAVAlignmentModel(input_dim=embed_dim, hidden_dim=4096, output_dim=embed_dim, num_layers=4,dropout=0.1).to(self.device) # , input_dim=2048, hidden_dim=1024, output_dim=256
-        
-        # 使用AdamW优化器 + 学习率预热
+
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
-        # scheduler = torch.optim.lr_scheduler.LambdaLR(
-        #     optimizer,
-        #     lr_lambda=lambda epoch: min(epoch / 100, 1.0)  # 前100个epoch线性预热
-        # )
         input_cavs = self._align_dimension_by_ae()
         input_cavs = normalize_cav(input_cavs)
         # import pdb; pdb.set_trace()
         # 准备所有样本对
         pos_pairs, neg_pairs = self.prepare_pairs(input_cavs=input_cavs)
         all_pairs = pos_pairs + neg_pairs
-        labels = torch.cat([
-            torch.ones(len(pos_pairs)),   # 正样本标签1
-            torch.zeros(len(neg_pairs))   # 负样本标签0
-        ]).to(self.device)
+
         # contrastive_loss = ContrastiveLoss()
         for epoch in range(epochs):
             # 随机采样批次
             indices = torch.randperm(len(all_pairs))[:batch_size]
             batch_pairs = [all_pairs[i] for i in indices]
-            batch_labels = labels[indices]
+            
             
             # 转换为tensor
             batch_tensor = torch.stack([
-                # torch.cat([torch.tensor(p[0]), torch.tensor(p[1])]) 
                 torch.cat([p[0], p[1]]) 
                 for p in batch_pairs
             ]).float().to(self.device)
@@ -1018,10 +874,8 @@ class IntegrateCAV(nn.Module):
             # 反向传播
             optimizer.zero_grad()
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # 梯度裁剪
             optimizer.step()
-            # scheduler.step()
-            # optimizer.step()
+
             
             if (epoch+1) % 100 == 0:
                 print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
@@ -1045,19 +899,9 @@ class IntegrateCAV(nn.Module):
         print("Aligned CAVs saved at", os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"))
         self.__isAligned = True
         return self.aligned_cavs
-        # # 保存对齐后的CAV
-        # aligned_cavs = []
-        # with torch.no_grad():
-        #     for layer in self.layers_cavs:
-        #         layer_tensor = torch.tensor(layer).float().to(self.device)
-        #         aligned_layer = model(layer_tensor).cpu().numpy()
-        #         aligned_cavs.append(aligned_layer)
-        
-        # np.save(os.path.join(self.save_dir, 'aligned_cavs.npy'), aligned_cavs)
-        # torch.save(model.state_dict(), os.path.join(self.save_dir, 'alignment_model.pth'))
-        # return aligned_cavs
+
     
-    def fuse(self,fuse_method="mean", overwrite=False):
+    def fuse(self,fuse_method, bottlenecks,concepts, target, num_random_exp, overwrite=False):
         """
         Fuse the aligned CAVs
         """
@@ -1093,7 +937,7 @@ class IntegrateCAV(nn.Module):
             
             fused_cavs = np.array(fused_cavs)
         elif fuse_method == "cosine":
-            input_cavs = self._align_dimension_by_ae(type="fuse")
+            input_cavs = self.aligned_cavs
             fused_cavs = []
             for concept_idx in range(len(input_cavs[0])):
                 cos_sim = []
@@ -1107,7 +951,7 @@ class IntegrateCAV(nn.Module):
             import tcav.activation_generator as act_gen
             import tcav.utils as utils
             import tcav.model  as model
-            aligned_cavs = self._align_dimension_by_ae(type="fuse")
+            aligned_cavs = self.aligned_cavs
             source_dir = '/p/realai/zhenghao/CAVFusion/data'
             user = 'zhenghao'
             # the name of the parent directory that results are stored (only if you want to cache)
@@ -1117,15 +961,8 @@ class IntegrateCAV(nn.Module):
             activation_dir =  working_dir+ '/activations/'
             sess = utils.create_session()
 
-            # GRAPH_PATH is where the trained model is stored.
             GRAPH_PATH = source_dir + "/inception5h/tensorflow_inception_graph.pb"
-            # LABEL_PATH is where the labels are stored. Each line contains one class, and they are ordered with respect to their index in 
-            # the logit layer. (yes, id_to_label function in the model wrapper reads from this file.)
-            # For example, imagenet_comp_graph_label_strings.txt looks like:
-            # dummy                                                                                      
-            # kit fox
-            # English setter
-            # Siberian husky ...
+
 
             LABEL_PATH = source_dir + "/inception5h/imagenet_comp_graph_label_strings.txt"
 
@@ -1133,76 +970,83 @@ class IntegrateCAV(nn.Module):
                                                     GRAPH_PATH,
                                                     LABEL_PATH)
             act_generator = act_gen.ImageActivationGenerator(mymodel, source_dir, activation_dir, max_examples=100)
-            model = TransformerCAVFusion(embedding_dim=len(aligned_cavs[0][0]), num_layers=len(aligned_cavs)).to(self.device)
-            cav_batchs = [aligned_cavs[:, i, :] for i in range(len(aligned_cavs[0]))]
-            label_concepts = []
-            for concept in concepts:
-                for _ in range(num_random_exp):
-                    label_concepts.append(concept)
-            if len(label_concepts) != len(cav_batchs[0]):
-                raise ValueError("Number of concepts does not match the number of CAVs.")
-            dataset = CAVDataset(cav_batchs, label_concepts)
+            decoders = []
+            for layer_idx, _ in enumerate(bottlenecks):
+                decoder = self.autoencoders.load_autoencoder(layer_idx).decode
+                decoders.append(decoder)
 
-            num_epochs = 10  
-            model.train()
-            criterion = TCAVLoss()
-            optimizer = optim.Adam(model.parameters(), lr=1e-4)
-            
             class_examples = act_generator.get_examples_for_concept(target) # get examples for target class(not sure)
             class_acts_layer = {}
             acts = act_generator.process_and_load_activations(bottlenecks, concepts + [target])
             for bottleneck in bottlenecks:
                 acts_instance = acts[target][bottleneck]
                 class_acts_layer[bottleneck] = acts_instance
+           
+            label_concepts = []
+            for concept_idx, _ in enumerate(concepts):
+                for _ in range(num_random_exp):
+                    label_concepts.append(concept_idx)
+
+            model = TransformerCAVFusion(embedding_dim=len(aligned_cavs[0][0]), num_layers=len(aligned_cavs)).to(self.device)
+            cav_batchs = [aligned_cavs[:, i, :] for i in range(len(aligned_cavs[0]))]
+            # import pdb; pdb.set_trace()
+            if len(label_concepts) != len(cav_batchs):
+                raise ValueError("Number of concepts does not match the number of CAVs.")
+            dataset = CAVDataset(cav_batchs, label_concepts)
+
+            num_epochs = 10
+            model.train()
+            # device, num_concepts, var_weight=0.5, center_weight=1, margin=0.3
+            criterion = TCAVLoss(
+                device=self.device,
+                num_concepts=len(concepts),
+                var_weight=3,
+                similarity_weight=1,
+                margin=0.15
+            )
+
+            optimizer = optim.Adam(model.parameters(), lr=1e-3)
                 
             for epoch in range(num_epochs):
-                # model.train()
                 total_loss = 0  
-
-                for cav_batch, concept in DataLoader(dataset, batch_size=8, shuffle=True):
+                for cav_batch, labels in DataLoader(dataset, batch_size=5, shuffle=True):
+                    
                     cav_batch = cav_batch.to(self.device)
                     optimizer.zero_grad()
 
-                    # 前向传播    
                     fused_cav = model(cav_batch)
-
-
-                    # 计算损失 def forward(self, fused_cav, deocder, act, concept, target, mymodel):
-                    loss = criterion(fused_cav,self.autoencoders, class_acts_layer, class_examples, concept, target, mymodel)  # 按层平均
+                    fused_cav.requires_grad_(True)
+                    loss = criterion(
+                        input=cav_batch,
+                        fused_cav=fused_cav,
+                        decoders=decoders, 
+                        class_acts_layer=class_acts_layer, 
+                        class_examples=class_examples, 
+                        target=target, 
+                        mymodel=mymodel, 
+                        bottlenecks=bottlenecks,
+                        concept_labels=labels
+                    )  # 按层平均
                     loss.backward()
                     optimizer.step()
-
                     total_loss += loss.item()
 
                 print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {total_loss:.4f}")
 
             model = model.eval()
-            fused_cavs = [model(cav_embeddings) for cav_embeddings in cav_batchs] # can we use the training data as the input?
+            os.makedirs(save_dir, exist_ok=True)
+            save_path  = os.path.join(save_dir,f"fuse_model_{self.autoencoders.key_params}.pth")
+            torch.save(model.state_dict(), save_path)
+            print(f"Model saved to {save_path}")
 
-            '''
-            TCAV.compute_tcav_score()
-                  def compute_tcav_score(mymodel, activation_generator.get_model()
-                         target_class, zebra
-                         concept, 
-                         cav,
-                         class_acts,
-                         examples,
-                         run_parallel=True,
-                         num_workers=20):
+            fused_cavs = []
+            for cav_embeddings in cav_batchs:
+                cav_tensor = torch.tensor(cav_embeddings).to(self.device)
+                cav_tensor = cav_tensor.unsqueeze(0)
+                fused_cav = model(cav_tensor).cpu().detach().numpy()
+                fused_cav = np.squeeze(fused_cav) 
+                fused_cavs.append(fused_cav)
 
-            Args:
-            mymodel: a model class instance
-            target_class: one target class
-            concept: one concept
-            cav: an instance of cav
-            class_acts: activations of the examples in the target class where
-                examples[i] corresponds to class_acts[i]
-            examples: an array of examples of the target class where examples[i]
-                corresponds to class_acts[i]
-            run_parallel: run this parallel fashion
-            num_workers: number of workers if we run in parallel.
-            '''
-            pass
         else:
             raise NotImplementedError(f"Fuse method {fuse_method} is not implemented.")
         self.fused_cavs = fused_cavs # [num_concepts, cav_dim]
