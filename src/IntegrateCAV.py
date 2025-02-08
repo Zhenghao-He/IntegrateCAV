@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import accuracy_score
 import random
 from align_dim import augment_cavs
+from configs import concepts_string, fuse_input
 # from configs import num_random_exp
 
 def normalize_tensor(x, eps=1e-8):
@@ -94,7 +95,7 @@ def prepare_batch(cavs,device,num_random_exp=3,batch_size=2):
     cav_k_arr = np.array([cav.cpu().numpy() for cav in cavs[layer_key]])
     aug_query = augment_cavs(cavs=cav_q_arr, num_augments=1, noise_std=0.1)
     aug_key = augment_cavs(cavs=cav_k_arr, num_augments=1, noise_std=0.1)
-    # import pdb; pdb.set_trace()
+
     aug_query = [torch.tensor(cav, dtype=torch.float32, device=device) for cav in aug_query]
     aug_key = [torch.tensor(cav, dtype=torch.float32, device=device) for cav in aug_key]
 
@@ -102,8 +103,69 @@ def prepare_batch(cavs,device,num_random_exp=3,batch_size=2):
     cav_key = torch.stack(aug_key)  
     return cav_query, cav_key
 
+# class InfoNCELoss(nn.Module):
+#     def __init__(self, temperature=0.1):
+#         super().__init__()
+#         self.temperature = temperature  # 温度参数
+    
+#     def forward(self, anchor, positive, negatives):
+#         """
+#         Args:
+#             anchor: [batch_size, embed_dim] 锚点样本
+#             positive: [batch_size, embed_dim] 正样本
+#             negatives: [batch_size, num_neg, embed_dim] 负样本
+#         Returns:
+#             loss: InfoNCE 损失值
+#         """
+#         # 计算锚点与正样本的相似度
+#         pos_sim = F.cosine_similarity(anchor, positive, dim=1)  # [batch_size]
+#         pos_sim = pos_sim / self.temperature
+        
+#         # 计算锚点与负样本的相似度
+#         anchor_expanded = anchor.unsqueeze(1)  # [batch_size, 1, embed_dim]
+#         neg_sim = F.cosine_similarity(anchor_expanded, negatives, dim=2)  # [batch_size, num_neg]
+#         neg_sim = neg_sim / self.temperature
+        
+#         # 计算 InfoNCE 损失
+#         numerator = torch.exp(pos_sim)  # [batch_size]
+#         denominator = numerator + torch.exp(neg_sim).sum(dim=1)  # [batch_size]
+#         loss = -torch.log(numerator / denominator).mean()
+#         return loss
+class InfoNCELoss(nn.Module):
+    def __init__(self, temperature=0.5, reg_lambda=0):
+        super().__init__()
+        self.temperature = temperature
+        self.reg_lambda = reg_lambda  # 正则化项权重
+    
+    def forward(self, anchor, positive, negatives):
+        # 原始 InfoNCE 计算
+        pos_sim = F.cosine_similarity(anchor, positive, dim=1)
+        pos_sim_scaled = pos_sim / self.temperature
+        
+        anchor_expanded = anchor.unsqueeze(1)
+        neg_sim = F.cosine_similarity(anchor_expanded, negatives, dim=2)
+        neg_sim_scaled = neg_sim / self.temperature
+        
+        numerator = torch.exp(pos_sim_scaled)
+        denominator = numerator + torch.exp(neg_sim_scaled).sum(dim=1)
+        nce_loss = -torch.log(numerator / denominator).mean()
+        
+        # 添加正则化项：强制正样本相似度接近1
+        reg_term = (1 - pos_sim).mean()  # 最小化 1 - 余弦相似度
+        total_loss = nce_loss + self.reg_lambda * reg_term
+        
+        return total_loss
+    
+class ConsistencyLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
 
-
+    def forward(self, anchor, positive, negatives, ori_anchor, ori_positive, ori_negatives):
+        pos_ori_sim1 = F.cosine_similarity(anchor, ori_anchor, dim=1)
+        pos_ori_sim2 = F.cosine_similarity(positive, ori_positive, dim=1)
+        neg_ori_sim1 = F.cosine_similarity(negatives, ori_negatives, dim=2)
+        pos_loss = (1-pos_ori_sim1).mean() + (1-pos_ori_sim2).mean() + (1-neg_ori_sim1).mean()
+        return pos_loss
 
 
 class TransformerQueryEncoder(nn.Module):
@@ -188,6 +250,38 @@ loss += query_encoder.orthogonal_regularization()
 query_encoder = OrthogonalLinear(input_dim=256, embed_dim=256).cuda()
 
 '''
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, margin=0.0):
+        super().__init__()
+        self.margin = margin  # 负样本对的间隔
+    
+    def forward(self, pos_z1, pos_z2, neg_z1, neg_z2, pos_ori_1, pos_ori_2, neg_ori_1, neg_ori_2):
+        """
+        Args:
+            pos_z1: [batch_size, embed_dim] 正样本视图1
+            pos_z2: [batch_size, embed_dim] 正样本视图2
+            neg_z1: [batch_size, embed_dim] 负样本视图1
+            neg_z2: [batch_size, embed_dim] 负样本视图2
+        Returns:
+            loss: 对比损失值
+        """
+        # 正样本对损失（拉近）
+        pos_sim = F.cosine_similarity(pos_z1, pos_z2)  # [batch_size]
+        pos_ori_sim1 = F.cosine_similarity(pos_z1, pos_ori_1)
+        pos_ori_sim2 = F.cosine_similarity(pos_z2, pos_ori_2)
+        neg_ori_sim1 = F.cosine_similarity(neg_z1, neg_ori_1)
+        neg_ori_sim2 = F.cosine_similarity(neg_z2, neg_ori_2)
+        pos_loss = 10*(1 - pos_sim).mean() + (1-pos_ori_sim1).mean() + (1-pos_ori_sim2).mean() +(1-neg_ori_sim1).mean() + (1-neg_ori_sim2).mean()
+        
+        # 负样本对损失（推开）
+        neg_sim = F.cosine_similarity(neg_z1, neg_z2)  # [batch_size]
+        neg_loss = F.relu(neg_sim - self.margin).mean()  # 最小化 max(0, cosine_sim - margin)
+        
+        # 总损失
+        loss = pos_loss + 5*neg_loss
+        return loss
+
 class CAVAlignmentModel(nn.Module):
     def __init__(self, input_dim=2048, hidden_dim=1024, output_dim=256):
         super().__init__()
@@ -195,7 +289,7 @@ class CAVAlignmentModel(nn.Module):
         self.projection = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.GELU(),
+            nn.GELU(),  # 确保激活函数是 GELU
             nn.Dropout(0.1),
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -203,28 +297,35 @@ class CAVAlignmentModel(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(hidden_dim, output_dim)
         )
-        # 残差连接投影（确保维度匹配）
+        # 残差连接投影
         self.residual_proj = nn.Linear(input_dim, output_dim) if input_dim != output_dim else nn.Identity()
-        
-        # 初始化权重
         self._init_weights()
     
     def _init_weights(self):
         for layer in self.projection:
             if isinstance(layer, nn.Linear):
-                # 使用 Xavier 初始化
-                nn.init.xavier_normal_(layer.weight, gain=1.0)
+                # 使用 Kaiming 初始化（兼容旧版本）
+                nn.init.kaiming_normal_(
+                    layer.weight, 
+                    mode='fan_out', 
+                    nonlinearity='relu'  # 近似代替 GELU
+                )
                 if layer.bias is not None:
                     nn.init.constant_(layer.bias, 0.0)
         if isinstance(self.residual_proj, nn.Linear):
-            nn.init.xavier_normal_(self.residual_proj.weight, gain=1.0)
+            nn.init.kaiming_normal_(
+                self.residual_proj.weight, 
+                mode='fan_out', 
+                nonlinearity='relu'
+            )
             if self.residual_proj.bias is not None:
                 nn.init.constant_(self.residual_proj.bias, 0.0)
     
     def forward(self, x):
         projected_x = self.projection(x)
-        residual_x = self.residual_proj(x)  # 确保维度匹配
+        residual_x = self.residual_proj(x)
         return F.normalize(projected_x + residual_x, dim=-1)
+
 
 
 
@@ -318,11 +419,11 @@ class TCAVLoss(nn.Module):
         tcav_matrix = torch.stack(tcav_values)  # [num_layers, batch_size]
         consistency_loss = tcav_matrix.var(dim=0).mean()  # 沿层维度计算方差，然后取批次均值
         print("Consistency Loss:", consistency_loss.item(), "Similarity Loss:", similarity_loss.item())
+        # import pdb; pdb.set_trace()
+        # similarity_loss=similarity_loss.to(consistency_loss.device)
         # === 组合损失 ===
-        total_loss = (
-            self.var_weight * consistency_loss + 
-            self.similarity_weight * similarity_loss
-        )
+        total_loss = self.var_weight * consistency_loss + self.similarity_weight * similarity_loss
+
         print("Total Loss:", total_loss)
         return total_loss
     
@@ -356,8 +457,8 @@ class TCAVLoss(nn.Module):
             
             # 计算该样本的梯度
             grad = mymodel.get_gradient(act, [class_id], bottleneck, example)
-            grad = torch.tensor(grad, dtype=torch.float32, device=device).view(-1)  # 确保梯度形状匹配
-            
+            grad = torch.tensor(grad, dtype=torch.float32).to(cav.device).view(-1)
+            # import pdb; pdb.set_trace()
             # 计算点积
             # dot_prod = torch.dot(grad, cav) 
             cos_sim = F.cosine_similarity(grad.unsqueeze(0), cav, dim=1) 
@@ -461,47 +562,132 @@ class TransformerCAVFusion(nn.Module):
         
         return self.output_layer(global_cav)
 
+class CAVAlignTransformer(nn.Module):
+    def __init__(self, embedding_size, num_layers, num_transformer_layers=2, nhead=4):
+        """
+        参数说明：
+        - embedding_size: 每个 concept 的嵌入维度，与输入的最后一维对应
+        - num_layers: Transformer 处理的序列长度，对应输入的 num_layers
+        - num_transformer_layers: TransformerEncoder 中的层数
+        - nhead: 多头注意力的头数
+        """
+        super().__init__()
+        self.num_layers = num_layers
+        self.embedding_size = embedding_size
+        
+        # 可选：如果需要投影到 Transformer 的维度，这里假设输入 embedding_size 已经合适
+        # self.input_projection = nn.Linear(embedding_size, embedding_size)
 
+        # 添加一个可学习的位置编码参数，形状为 [num_layers, 1, embedding_size]
+        # 这样每一层可以获得位置信息（这里假设所有 concept 共用同一位置编码）
+        self.positional_encoding = nn.Parameter(torch.zeros(num_layers, 1, embedding_size))
+        
+        # 构建 Transformer Encoder
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embedding_size, nhead=nhead)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_transformer_layers)
+        
+        # 可选：后续再添加一个投影头
+        # self.projection_head = nn.Linear(embedding_size, embedding_size)
+    
+    def forward(self, x):
+        """
+        输入：
+            x: tensor，形状为 [num_layers, num_concepts_random, embedding_size]
+               这里 num_layers 表示层数，num_concepts_random 表示每层中 concept 数量
+        输出：
+            out: tensor，形状与输入相同，[num_layers, num_concepts_random, embedding_size]
+        """
+        # x 的形状： (S, N, E) ，其中 S=num_layers, N=num_concepts_random, E=embedding_size
+        # 为每个层的位置添加位置编码，位置编码在 concept 维度上共享
+        x = x + self.positional_encoding  # 自动广播到 [num_layers, num_concepts_random, embedding_size]
+        
+        # 如果需要先投影，可在此处添加：
+        # x = self.input_projection(x)
+        
+        # TransformerEncoder 期望输入形状为 (S, N, E)，此处 x 已符合要求
+        out = self.transformer_encoder(x)
+        
+        # 如果需要再经过投影头，则可添加：
+        # out = self.projection_head(out)
+        
+        return out
+    
+class CrossLayerContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.07, lambda_entropy=0.1, lambda_orth=0.1):
+        """
+        temperature: 对比损失的温度参数
+        lambda_entropy: 信息熵正则化的权重
+        lambda_orth: 正交正则化的权重
+        """
+        super().__init__()
+        self.temperature = temperature
+        self.lambda_entropy = lambda_entropy
+        self.lambda_orth = lambda_orth
+
+    def contrastive_loss(self, X):
+        """
+        计算跨层对比损失，X 的形状为 [num_layers, num_concepts, embedding_size]
+        这里假设每一行（每个 concept）在不同层应保持相似。
+        """
+        num_layers, num_concepts, embedding_size = X.shape
+        
+        # 归一化得到余弦相似度
+        X_norm = F.normalize(X, dim=-1)
+        # 计算不同层之间，每个 concept 的相似性
+        # 这里通过在层维度上做矩阵乘法获得形状 [num_layers, num_layers, num_concepts]
+        similarities = torch.einsum('lij,lkj->lik', X_norm, X_norm)
+        
+        # 构造 mask，排除相同层（对角线部分），只计算跨层相似性
+        layer_mask = (~torch.eye(num_layers, dtype=torch.bool, device=X.device)).unsqueeze(-1)  # [num_layers, num_layers, 1]
+        similarities = similarities.masked_fill(~layer_mask, float('-inf'))
+        
+        # 对每个正样本对（相同 concept 在不同层），我们希望其相似性较高
+        # 使用 logsumexp 来计算损失（这里可以根据实际情况调整损失计算方式）
+        loss_contrast = - torch.logsumexp(similarities / self.temperature, dim=1).mean()
+        return loss_contrast
+
+    def entropy_loss(self, X):
+        """
+        信息熵正则化，鼓励输出分布多样性，防止塌缩。
+        """
+        # 将每个向量看作概率分布（通过 softmax）
+        p = F.softmax(X, dim=-1)
+        entropy = -torch.sum(p * torch.log(p + 1e-8), dim=-1).mean()
+        return entropy
+
+    def orthogonality_loss(self, X):
+        """
+        正交正则化损失，鼓励不同概念之间保持正交性，防止所有向量退化为相同值。
+        """
+        num_layers, num_concepts, embedding_size = X.shape
+        # 将 [num_layers, num_concepts, embedding_size] reshape 为 [num_layers*num_concepts, embedding_size]
+        X_reshaped = X.view(num_layers * num_concepts, embedding_size)
+        # 计算 Gram 矩阵
+        gram = X_reshaped @ X_reshaped.T
+        I = torch.eye(gram.size(0), device=X.device)
+        loss_orth = torch.norm(gram - I, p='fro')
+        return loss_orth
+
+    def forward(self, X):
+        loss_contrast = self.contrastive_loss(X)
+        loss_entropy = self.entropy_loss(X)
+        loss_orth = self.orthogonality_loss(X)
+        
+        total_loss = loss_contrast + self.lambda_entropy * loss_entropy + self.lambda_orth * loss_orth
+        return total_loss, loss_contrast, loss_entropy, loss_orth
+    
 class MoCoCAV(nn.Module):
     def __init__(self, input_dim, embed_dim, cavs, queue_size=4096, momentum=0.999, temperature=0.07, device = "cuda"):
         super().__init__()
         self.device = device
-        # self.query_encoder = AttnQueryModel(input_dim, embed_dim).to(self.device)
-        # self.key_encoder = AttnQueryModel(input_dim, embed_dim).to(self.device)
-        self.query_encoder = ResidualQueryModel(input_dim, embed_dim).to(self.device)
-        self.key_encoder = ResidualQueryModel(input_dim, embed_dim).to(self.device)
-        # self.query_encoder = OrthogonalLinear(input_dim, embed_dim).to(self.device)
-        # self.key_encoder = OrthogonalLinear(input_dim, embed_dim).to(self.device)
-        # self.query_encoder = OrthogonalTransformer(input_dim=input_dim, embed_dim=embed_dim).to(self.device)
-        # self.key_encoder = OrthogonalTransformer(input_dim=input_dim, embed_dim=embed_dim).to(self.device)
+        self.query_encoder = OrthogonalLinear(input_dim, embed_dim).to(self.device)
+        self.key_encoder = OrthogonalLinear(input_dim, embed_dim).to(self.device)
         # Initialize queue
         self.register_buffer("queue", torch.randn(queue_size, embed_dim))
         self.queue = F.normalize(self.queue, dim=1).detach()
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
         self.queue_size = queue_size
         self.cavs = cavs
-        # Preprocess cavs
-        # cavs_tensor = torch.tensor(cavs, dtype=torch.float32).cuda()
-        # cavs_array = np.array(cavs.cpu(), dtype=np.float32)  #
-        # cavs_tensor = torch.tensor(cavs_array, dtype=torch.float32).cuda() 
-
-        # Entire tensor for efficiency
-        # num_layers = len(cavs)
-        # num_concepts = len(cavs[0])
-        # # num_layers = cavs_tensor.size(0)
-        # # num_concepts = cavs_tensor.size(1)
-
-        # queue_data = []
-        # for i in range(queue_size):
-        #     layer_idx = (i // num_concepts) % num_layers
-        #     concept_idx = i % num_concepts
-        #     # cav = cavs_tensor[layer_idx, concept_idx, :]
-        #     # import pdb; pdb.set_trace()
-        #     cav = cavs[layer_idx][concept_idx].unsqueeze(0)
-        #     encoded_cav = F.normalize(self.key_encoder(cav), dim=1).detach()
-        #     queue_data.append(encoded_cav.squeeze(0))
-
-        # self.queue = torch.stack(queue_data)
 
         self.momentum = momentum
         self.temperature = temperature
@@ -636,7 +822,8 @@ class IntegrateCAV(nn.Module):
             aligned_cavs: 
         """
 
-        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method)
+        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method, concepts_string)
+        os.makedirs(save_dir, exist_ok=True)
         if not self.autoencoders.overwrite and os.path.exists(os.path.join(save_dir,f"input_cavs_{self.autoencoders.key_params}.npy")):
             print("Input CAVs already exist. Loading from saved files.")
             input_cavs = np.load(os.path.join(save_dir,f"input_cavs_{self.autoencoders.key_params}.npy"), allow_pickle=True)
@@ -679,7 +866,7 @@ class IntegrateCAV(nn.Module):
         return input_cavs
 
     def align_with_moco(self, queue_size, momentum, temperature, embed_dim=2048, epochs = 2000, overwrite=False):
-        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method)
+        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method,concepts_string)
         if not overwrite :
             if os.path.exists(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy")):
                 print("Aligned CAVs already exist. Loading from saved files.")
@@ -777,40 +964,117 @@ class IntegrateCAV(nn.Module):
                 self.aligned_cavs.append(aligned_cavs_layer)
         print("CAVs aligned!")
         del model # release memory
+        self.aligned_cavs = np.array(self.aligned_cavs)
         np.save(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"), self.aligned_cavs)
         print("Aligned CAVs saved at", os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"))
         self.__isAligned = True
         return self.aligned_cavs
 
-   
+    def align_with_transformer(self, overwrite=False):
+        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method,concepts_string)
+        input_cavs = self._align_dimension_by_ae(type="fuse")
+        input_cavs = torch.tensor(input_cavs).to(self.device)
 
-    def prepare_pairs(self, input_cavs):
-        """生成正负样本对：同一概念跨层为正，不同概念为负"""
-        positive_pairs = []
-        negative_pairs = []
-        
-        # 遍历所有概念
-        for concept_id in range(self.num_concepts):
-            # 收集该概念在所有层的CAV
-            concept_cavs = [layer_cavs[concept_id*self.num_random_exp + i] for layer_cavs in input_cavs for i in range(self.num_random_exp)]
+        #def __init__(self, embedding_size, num_layers, num_transformer_layers=2, nhead=4):
+        model = CAVAlignTransformer(
             
-            # 生成同一概念的正样本对（跨层）
-            for i in range(len(concept_cavs)):
-                for j in range(i+1, len(concept_cavs)):
-                    positive_pairs.append((concept_cavs[i], concept_cavs[j]))
+            embedding_size=len(input_cavs[0][0]),
+            num_layers=len(input_cavs),
+            num_transformer_layers=2,
+            nhead=4
+        ).to(self.device)   
+        loss_fn = CrossLayerContrastiveLoss(temperature=0.07, lambda_entropy=0.1, lambda_orth=0.1).to(self.device)
+
+        optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+        # -------------------------------
+        # 4. 训练循环
+        # -------------------------------
+        num_epochs = 10
+
+        for epoch in range(num_epochs):
+            model.train()
+            optimizer.zero_grad()
             
-            # 生成负样本（随机选择不同概念的CAV）
-            for _ in range(len(concept_cavs)):
-                neg_concept = np.random.choice([c for c in range(self.num_concepts) if c != concept_id])
-                neg_layer = np.random.randint(0, len(input_cavs))
-                neg_concept_random = np.random.randint(0, self.num_random_exp)
-                negative_pairs.append((
-                    concept_cavs[np.random.randint(0, len(concept_cavs))],
-                    input_cavs[neg_layer][neg_concept*self.num_random_exp + neg_concept_random]
-                ))
+            # 模型前向，输出形状为 [num_layers, num_concepts_random, embedding_size]
+            cav_out = model(input_cavs)
+            # import pdb; pdb.set_trace()
+            # 计算损失
+            total_loss, loss_contrast, loss_entropy, loss_orth = loss_fn(cav_out)
+            
+            # 反向传播与优化
+            total_loss.backward()
+            optimizer.step()
+            
+            if (epoch + 1) % 100 == 0:
+                print(f"Epoch [{epoch+1}/{num_epochs}], Total Loss: {total_loss.item():.4f}, "
+                    f"Contrast Loss: {loss_contrast.item():.4f}, Entropy Loss: {loss_entropy.item():.4f}, "
+                    f"Orth Loss: {loss_orth.item():.4f}")
+
+        os.makedirs(save_dir, exist_ok=True)
+        save_path  = os.path.join(save_dir,f"align_transformer_{self.autoencoders.key_params}.pth")
+        torch.save(model.state_dict(), save_path)
+        print(f"Model saved to {save_path}")
+        # -------------------------------
+        # 5. 测试输出（训练结束后的 CAV）
+        # -------------------------------
+        model.eval()
+        with torch.no_grad():
+            self.aligned_cavs= model(input_cavs)
+
+        np.save(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"), self.aligned_cavs)
+        print("Aligned CAVs saved at", os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"))
+        self.__isAligned = True
+        return self.aligned_cavs
+
+  
+    def prepare_batch(self, input_cavs, num_concepts, num_neg_per_anchor=5):
+        anchors = []
+        positives = []
+        negatives = []
         
-        return positive_pairs, negative_pairs
-    
+        # 遍历所有概念和层
+        for concept_id in range(num_concepts):
+            for layer_idx in range(len(input_cavs)):
+                # 当前层中该概念的所有随机实验 CAV
+                start_idx = concept_id * self.num_random_exp
+                end_idx = start_idx + self.num_random_exp
+                concept_cavs = input_cavs[layer_idx][start_idx:end_idx]
+                
+                # 为每个 CAV 生成跨层正样本对和同层负样本
+                for exp_idx in range(self.num_random_exp):
+                    # 锚点：当前层的 CAV
+                    anchor = concept_cavs[exp_idx]
+                    
+                    # === 正样本：其他层同一概念的 CAV ===
+                    # 选择其他层
+                    # other_layers = [l for l in range(len(input_cavs)) if l != layer_idx]
+                    # target_layer = np.random.choice(other_layers)
+                    target_layer = num_concepts - layer_idx
+                    # 同一概念的随机实验
+                    target_exp = np.random.randint(0, self.num_random_exp)
+                    positive = input_cavs[target_layer][concept_id * self.num_random_exp + target_exp]
+                    
+                    # === 负样本：同一层不同概念的 CAV ===
+                    neg_samples = []
+                    for _ in range(num_neg_per_anchor):
+                        # 随机选择不同概念
+                        neg_concept = np.random.choice([c for c in range(num_concepts) if c != concept_id])
+                        # 同一层中的随机实验
+                        neg_exp = np.random.randint(0, self.num_random_exp)
+                        neg_cav = input_cavs[layer_idx][neg_concept * self.num_random_exp + neg_exp]
+                        neg_samples.append(neg_cav)
+                    
+                    anchors.append(anchor)
+                    positives.append(positive)
+                    negatives.append(neg_samples)
+        
+        # 转换为 Tensor 并移动到设备
+        anchors = torch.tensor(np.array(anchors), dtype=torch.float32).to(self.device)
+        positives = torch.tensor(np.array(positives), dtype=torch.float32).to(self.device)
+        negatives = torch.tensor(np.array(negatives), dtype=torch.float32).to(self.device)
+        
+        return anchors, positives, negatives
     def contrastive_loss(self, z1, z2, temperature=0.05):
         """改进的对比损失，显式处理正负样本"""
         batch_size = z1.size(0)
@@ -833,7 +1097,7 @@ class IntegrateCAV(nn.Module):
         return F.cross_entropy(logits, labels)
     
     def train(self,embed_dim=2048, epochs=1000, batch_size=256, lr=1e-3, overwrite=False):#  embed_dim=2048, epochs = 2000):
-        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method)
+        save_dir = os.path.join(self.save_dir,"align_model", self.dim_align_method,concepts_string)
         if not overwrite :
             if os.path.exists(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy")):
                 print("Aligned CAVs already exist. Loading from saved files.")
@@ -843,43 +1107,69 @@ class IntegrateCAV(nn.Module):
                 return self.aligned_cavs
         model = CAVAlignmentModel(input_dim=embed_dim, hidden_dim=4096, output_dim=embed_dim).to(self.device) # , input_dim=2048, hidden_dim=1024, output_dim=256
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
-        input_cavs = self._align_dimension_by_ae()
+        # optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
+        input_cavs = self._align_dimension_by_ae(type="fuse")
+        # import pdb; pdb.set_trace()
         input_cavs = normalize_cav(input_cavs)
         # import pdb; pdb.set_trace()
         # 准备所有样本对
-        pos_pairs, neg_pairs = self.prepare_pairs(input_cavs=input_cavs)
-        all_pairs = pos_pairs + neg_pairs
+        # num_neg_per_pos=5
+        # pos_pairs, neg_pairs = self.prepare_pairs(input_cavs=input_cavs,num_neg_per_pos=num_neg_per_pos)
+        # all_pairs = pos_pairs + neg_pairs
 
-        # contrastive_loss = ContrastiveLoss()
+        # contrastive_loss = ContrastiveLoss(margin=0.15)
+    
+        # 优化器增强：添加学习率预热和余弦退火
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        # warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #     optimizer, 
+        #     lr_lambda=lambda epoch: min(1.0, (epoch + 1) / 100)  # 100步预热
+        # )
+        
+        # 梯度裁剪
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
+        # 初始化 InfoNCE 损失函数
+        info_nce_loss = InfoNCELoss(temperature=0.1)
+        consistency_loss = ConsistencyLoss()
         for epoch in range(epochs):
-            # 随机采样批次
-            indices = torch.randperm(len(all_pairs))[:batch_size]
-            batch_pairs = [all_pairs[i] for i in indices]
+            # 生成批次数据
+            anchors, positives, negatives = self.prepare_batch(
+                input_cavs, 
+                num_concepts=self.num_concepts,
+                num_neg_per_anchor=5
+            )
             
+            # 将数据移动到设备
+            anchors = anchors.to(self.device)
+            positives = positives.to(self.device)
+            negatives = negatives.to(self.device)
             
-            # 转换为tensor
-            batch_tensor = torch.stack([
-                torch.cat([p[0], p[1]]) 
-                for p in batch_pairs
-            ]).float().to(self.device)
+            # 前向传播
+            anchor_emb = model(anchors)       # [batch_size, embed_dim]
+            positive_emb = model(positives)   # [batch_size, embed_dim]
+            negative_emb = model(negatives)   # [batch_size, num_neg, embed_dim]
             
-            # 分割为两个视图
-            z1 = model(batch_tensor[:, :embed_dim])    # 视图1
-            z2 = model(batch_tensor[:, embed_dim:])    # 视图2
-            
-            # 计算损失
-            loss = self.contrastive_loss(z1, z2)
-            
+            # 计算 InfoNCE 损失
+            loss_info = info_nce_loss(anchor_emb, positive_emb, negative_emb)
+            loss_con = consistency_loss(anchor_emb, positive_emb, negative_emb, anchors, positives, negatives)
+            loss = loss_info + 3 * loss_con
+            # print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
+            # print(f"Epoch [{epoch+1}/{epochs}], InfoNCE Loss: {loss_info.item():.4f}")
+            # print(f"Epoch [{epoch+1}/{epochs}], Consistency Loss: {loss_con.item():.4f}")
             # 反向传播
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             
-            if (epoch+1) % 100 == 0:
-                print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
-        
+            # 打印损失
+            # if (epoch + 1) % 100 == 0:
+            print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
+            print(f"Epoch [{epoch+1}/{epochs}], InfoNCE Loss: {loss_info.item():.4f}")
+            print(f"Epoch [{epoch+1}/{epochs}], Consistency Loss: {loss_con.item():.4f}")
+
+
         aligned_cavs=[]
         model.eval()
         with torch.no_grad():
@@ -893,7 +1183,7 @@ class IntegrateCAV(nn.Module):
                     aligned_cavs_layer.append(cav.cpu().numpy())
                 aligned_cavs.append(aligned_cavs_layer)
         print("CAVs aligned!")
-        self.aligned_cavs = aligned_cavs
+        self.aligned_cavs = np.array(aligned_cavs)
         del model # release memory
         np.save(os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"), self.aligned_cavs)
         print("Aligned CAVs saved at", os.path.join(save_dir,f"aligned_cavs_{self.autoencoders.key_params}.npy"))
@@ -908,7 +1198,7 @@ class IntegrateCAV(nn.Module):
         if not self.__isAligned:
             raise ValueError("CAVs are not aligned. Please align the CAVs first.")
 
-        save_dir = os.path.join(self.save_dir,"fuse_model", self.dim_align_method, fuse_method)
+        save_dir = os.path.join(self.save_dir,"fuse_model", self.dim_align_method, fuse_method, concepts_string)
         if not overwrite:
             if os.path.exists(os.path.join(save_dir,f"fused_cavs_{self.autoencoders.key_params}.npy")):
                 print("Fused CAVs already exist. Loading from saved files.")
@@ -951,7 +1241,12 @@ class IntegrateCAV(nn.Module):
             import tcav.activation_generator as act_gen
             import tcav.utils as utils
             import tcav.model  as model
-            aligned_cavs = self.aligned_cavs
+            if fuse_input == "input_cavs":
+                print("using input cavs as input")
+                aligned_cavs = self._align_dimension_by_ae(type="fuse")
+            else:
+                print("using aligned_cavs as input")
+                aligned_cavs = self.aligned_cavs
             source_dir = '/p/realai/zhenghao/CAVFusion/data'
             user = 'zhenghao'
             # the name of the parent directory that results are stored (only if you want to cache)
@@ -1009,11 +1304,10 @@ class IntegrateCAV(nn.Module):
                 
             for epoch in range(num_epochs):
                 total_loss = 0  
-                for cav_batch, labels in DataLoader(dataset, batch_size=5, shuffle=True):
+                for cav_batch, labels in DataLoader(dataset, batch_size=16, shuffle=True):
                     
                     cav_batch = cav_batch.to(self.device)
                     optimizer.zero_grad()
-
                     fused_cav = model(cav_batch)
                     fused_cav.requires_grad_(True)
                     loss = criterion(

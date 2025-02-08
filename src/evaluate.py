@@ -15,7 +15,7 @@ from scipy.stats import ttest_ind
 
 import tensorflow as tf
 from align_dim import CAVAutoencoder
-from configs import alphas, concepts, bottlenecks, target, save_dir, dim_align_method, fuse_method, model_to_run, embed_dim, hidden_dims, dropout, device, num_random_exp, concepts_string
+from configs import alphas, concepts, bottlenecks, target, save_dir, dim_align_method, fuse_method, model_to_run, embed_dim, hidden_dims, dropout, device, num_random_exp, concepts_string, fuse_input
 
 
 
@@ -150,7 +150,7 @@ cavs = np.load(os.path.join(original_cavs_path,f"cavs_{concepts_string}.npy"), a
 
 autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout , device=device, save_dir=os.path.join(save_dir,model_to_run))
 
-cav_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params)
+cav_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params, fuse_input)
 # where the images live.
 save_path = save_dir
 # TODO: replace 'YOUR_PATH' with path to downloaded models and images. 

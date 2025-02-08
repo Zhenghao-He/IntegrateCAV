@@ -1,7 +1,7 @@
 
 import numpy as np
 import os
-from configs import embed_dim, dim_align_method, fuse_method, concepts, bottlenecks, hidden_dims, dropout,save_dir, model_to_run, num_random_exp, concepts_string
+from configs import embed_dim, dim_align_method, fuse_method, concepts, bottlenecks, hidden_dims, dropout,save_dir, model_to_run, num_random_exp, concepts_string, fuse_input
 from align_dim import CAVAutoencoder
 # import tensorflow as tf
 import torch
@@ -14,7 +14,7 @@ if __name__ == "__main__":
     overwrite = True
 
     
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
     
     original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
     cavs = np.load(os.path.join(original_cavs_path,f"cavs_{concepts_string}.npy"), allow_pickle=True)
@@ -23,13 +23,18 @@ if __name__ == "__main__":
     autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout , device=device, save_dir=os.path.join(save_dir,model_to_run), overwrite=False)
     
     
-    fused_cavs = np.load(os.path.join(save_dir, model_to_run,"fuse_model", dim_align_method, fuse_method, f"fused_cavs_{autoencoders.key_params}.npy"), allow_pickle=True)
+    fused_cavs = np.load(os.path.join(save_dir, model_to_run,"fuse_model", dim_align_method, fuse_method,concepts_string, f"fused_cavs_{autoencoders.key_params}.npy"), allow_pickle=True)
     # import pdb; pdb.set_trace()
-    reconstructed_save_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params)
+    reconstructed_save_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params, fuse_input)
     os.makedirs(reconstructed_save_dir, exist_ok=True)
+
+    decoders =[]
+    for layer_idx, bottleneck in enumerate(bottlenecks):
+        decoder = autoencoders.load_autoencoder(layer_idx).decode
+        decoders.append(decoder)
     index = 0
     for layer_idx, bottleneck in enumerate(bottlenecks): # 9
-        decoder = autoencoders.load_autoencoder(layer_idx).decode
+        decoder = decoders[layer_idx]
         concept_idx=0
         for fused_cav in fused_cavs: # concepts 9
             reconstructed = decoder(torch.tensor(fused_cav).to(device)).cpu().detach().numpy()
@@ -55,7 +60,7 @@ if __name__ == "__main__":
             concept_idx += 1
                 
                
-    # aligned_cavs = np.load(os.path.join(save_dir, model_to_run,"align_model", dim_align_method,  f"aligned_cavs_{autoencoders.key_params}.npy"), allow_pickle=True)
+    # aligned_cavs = np.load(os.path.join(save_dir, model_to_run,"align_model", dim_align_method, concepts_string, f"aligned_cavs_{autoencoders.key_params}.npy"), allow_pickle=True)
     # reconstructed_save_dir = os.path.join(save_dir, model_to_run, "reconstructed_cavs", dim_align_method, fuse_method, autoencoders.key_params)
     # os.makedirs(reconstructed_save_dir, exist_ok=True)
     # index = 0
