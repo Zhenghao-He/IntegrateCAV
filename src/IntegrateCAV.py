@@ -160,11 +160,10 @@ class ConsistencyLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, anchor, positive, negatives, ori_anchor, ori_positive, ori_negatives):
+    def forward(self, anchor, positive, ori_anchor, ori_positive):
         pos_ori_sim1 = F.cosine_similarity(anchor, ori_anchor, dim=1)
         pos_ori_sim2 = F.cosine_similarity(positive, ori_positive, dim=1)
-        neg_ori_sim1 = F.cosine_similarity(negatives, ori_negatives, dim=2)
-        pos_loss = (1-pos_ori_sim1).mean() + (1-pos_ori_sim2).mean() + (1-neg_ori_sim1).mean()
+        pos_loss = (1-pos_ori_sim1).mean() + (1-pos_ori_sim2).mean()
         return pos_loss
 
 
@@ -844,7 +843,7 @@ class IntegrateCAV(nn.Module):
             layer_autoencoder = self.autoencoders.load_autoencoder(layer_idx)
             for cav in cavs_layer:
                 cav = torch.tensor(cav).to(self.device)
-                cav = layer_autoencoder.encode(cav).detach()
+                cav = layer_autoencoder.module.encode(cav).detach()
 
                 cavs_layer_tmp.append(cav)
             input_cavs.append(cavs_layer_tmp)
@@ -1028,46 +1027,43 @@ class IntegrateCAV(nn.Module):
         return self.aligned_cavs
 
   
-    def prepare_batch(self, input_cavs, num_concepts, num_neg_per_anchor=5):
+    def prepare_batch(self, input_cavs):
         anchors = []
         positives = []
         negatives = []
         
         # 遍历所有概念和层
-        for concept_id in range(num_concepts):
-            for layer_idx in range(len(input_cavs)):
-                # 当前层中该概念的所有随机实验 CAV
-                start_idx = concept_id * self.num_random_exp
-                end_idx = start_idx + self.num_random_exp
-                concept_cavs = input_cavs[layer_idx][start_idx:end_idx]
+
+        for layer_idx in range(len(input_cavs)):
+            # 当前层中该概念的所有随机实验 CAV
+            start_idx = 0
+            end_idx = self.num_random_exp
+            concept_cavs = input_cavs[layer_idx][start_idx:end_idx]
+            
+            # 为每个 CAV 生成跨层正样本对和同层负样本
+            for exp_idx in range(self.num_random_exp):
+                # 锚点：当前层的 CAV
+                anchor = concept_cavs[exp_idx]
                 
-                # 为每个 CAV 生成跨层正样本对和同层负样本
-                for exp_idx in range(self.num_random_exp):
-                    # 锚点：当前层的 CAV
-                    anchor = concept_cavs[exp_idx]
-                    
-                    # === 正样本：其他层同一概念的 CAV ===
-                    # 选择其他层
-                    # other_layers = [l for l in range(len(input_cavs)) if l != layer_idx]
-                    # target_layer = np.random.choice(other_layers)
-                    target_layer = num_concepts - layer_idx
-                    # 同一概念的随机实验
-                    target_exp = np.random.randint(0, self.num_random_exp)
-                    positive = input_cavs[target_layer][concept_id * self.num_random_exp + target_exp]
-                    
-                    # === 负样本：同一层不同概念的 CAV ===
-                    neg_samples = []
-                    for _ in range(num_neg_per_anchor):
-                        # 随机选择不同概念
-                        neg_concept = np.random.choice([c for c in range(num_concepts) if c != concept_id])
-                        # 同一层中的随机实验
-                        neg_exp = np.random.randint(0, self.num_random_exp)
-                        neg_cav = input_cavs[layer_idx][neg_concept * self.num_random_exp + neg_exp]
-                        neg_samples.append(neg_cav)
-                    
-                    anchors.append(anchor)
-                    positives.append(positive)
-                    negatives.append(neg_samples)
+                # === 正样本：其他层同一概念的 CAV ===
+                # 选择其他层
+                # other_layers = [l for l in range(len(input_cavs)) if l != layer_idx]
+                # target_layer = np.random.choice(other_layers)
+                target_layer = len(input_cavs) - layer_idx -1
+                # 同一概念的随机实验
+                # import  pdb; pdb.set_trace()
+                target_exp = np.random.randint(0, self.num_random_exp)
+                positive = input_cavs[target_layer][target_exp]
+                
+                # === 负样本：同一层不同概念的 CAV ===
+                neg_samples = []
+                for i in range(len(input_cavs[1])-self.num_random_exp):
+                    neg_cav = input_cavs[layer_idx][self.num_random_exp + i]
+                    neg_samples.append(neg_cav)
+                
+                anchors.append(anchor)
+                positives.append(positive)
+                negatives.append(neg_samples)
         
         # 转换为 Tensor 并移动到设备
         anchors = torch.tensor(np.array(anchors), dtype=torch.float32).to(self.device)
@@ -1110,7 +1106,7 @@ class IntegrateCAV(nn.Module):
         # optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
         input_cavs = self._align_dimension_by_ae(type="fuse")
         # import pdb; pdb.set_trace()
-        input_cavs = normalize_cav(input_cavs)
+        # input_cavs = normalize_cav(input_cavs)
         # import pdb; pdb.set_trace()
         # 准备所有样本对
         # num_neg_per_pos=5
@@ -1137,10 +1133,8 @@ class IntegrateCAV(nn.Module):
             # 生成批次数据
             anchors, positives, negatives = self.prepare_batch(
                 input_cavs, 
-                num_concepts=self.num_concepts,
-                num_neg_per_anchor=5
             )
-            
+            # import pdb; pdb.set_trace()
             # 将数据移动到设备
             anchors = anchors.to(self.device)
             positives = positives.to(self.device)
@@ -1153,7 +1147,7 @@ class IntegrateCAV(nn.Module):
             
             # 计算 InfoNCE 损失
             loss_info = info_nce_loss(anchor_emb, positive_emb, negative_emb)
-            loss_con = consistency_loss(anchor_emb, positive_emb, negative_emb, anchors, positives, negatives)
+            loss_con = consistency_loss(anchor_emb, positive_emb, anchors, positives)
             loss = loss_info + 3 * loss_con
             # print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
             # print(f"Epoch [{epoch+1}/{epochs}], InfoNCE Loss: {loss_info.item():.4f}")
@@ -1172,8 +1166,9 @@ class IntegrateCAV(nn.Module):
 
         aligned_cavs=[]
         model.eval()
+        proj_cavs = input_cavs[:,:10,:]
         with torch.no_grad():
-            for cavs_layer in input_cavs:
+            for cavs_layer in proj_cavs:
                 aligned_cavs_layer = []
                 for cav in cavs_layer:
                     cav = torch.tensor(cav).to(self.device)
@@ -1198,7 +1193,7 @@ class IntegrateCAV(nn.Module):
         if not self.__isAligned:
             raise ValueError("CAVs are not aligned. Please align the CAVs first.")
 
-        save_dir = os.path.join(self.save_dir,"fuse_model", self.dim_align_method, fuse_method, concepts_string)
+        save_dir = os.path.join(self.save_dir,"fuse_model", self.dim_align_method, fuse_method, concepts_string, fuse_input)
         if not overwrite:
             if os.path.exists(os.path.join(save_dir,f"fused_cavs_{self.autoencoders.key_params}.npy")):
                 print("Fused CAVs already exist. Loading from saved files.")
@@ -1247,6 +1242,9 @@ class IntegrateCAV(nn.Module):
             else:
                 print("using aligned_cavs as input")
                 aligned_cavs = self.aligned_cavs
+            
+            aligned_cavs = aligned_cavs[:,:10,:]
+            # import pdb; pdb.set_trace()
             source_dir = '/p/realai/zhenghao/CAVFusion/data'
             user = 'zhenghao'
             # the name of the parent directory that results are stored (only if you want to cache)
@@ -1267,7 +1265,7 @@ class IntegrateCAV(nn.Module):
             act_generator = act_gen.ImageActivationGenerator(mymodel, source_dir, activation_dir, max_examples=100)
             decoders = []
             for layer_idx, _ in enumerate(bottlenecks):
-                decoder = self.autoencoders.load_autoencoder(layer_idx).decode
+                decoder = self.autoencoders.load_autoencoder(layer_idx).module.decode
                 decoders.append(decoder)
 
             class_examples = act_generator.get_examples_for_concept(target) # get examples for target class(not sure)
@@ -1282,14 +1280,17 @@ class IntegrateCAV(nn.Module):
                 for _ in range(num_random_exp):
                     label_concepts.append(concept_idx)
 
-            model = TransformerCAVFusion(embedding_dim=len(aligned_cavs[0][0]), num_layers=len(aligned_cavs)).to(self.device)
+            # model = TransformerCAVFusion(embedding_dim=len(aligned_cavs[0][0]), num_layers=len(aligned_cavs)).to(self.device)
+            model = TransformerCAVFusion(embedding_dim=len(aligned_cavs[0][0]), num_layers=len(aligned_cavs))
+            model = nn.DataParallel(model,device_ids=[0,1])
+            model = model.to(self.device)
             cav_batchs = [aligned_cavs[:, i, :] for i in range(len(aligned_cavs[0]))]
             # import pdb; pdb.set_trace()
             if len(label_concepts) != len(cav_batchs):
                 raise ValueError("Number of concepts does not match the number of CAVs.")
             dataset = CAVDataset(cav_batchs, label_concepts)
 
-            num_epochs = 10
+            num_epochs = 30
             model.train()
             # device, num_concepts, var_weight=0.5, center_weight=1, margin=0.3
             criterion = TCAVLoss(
@@ -1300,30 +1301,49 @@ class IntegrateCAV(nn.Module):
                 margin=0.15
             )
 
-            optimizer = optim.Adam(model.parameters(), lr=1e-3)
-                
+            optimizer = optim.Adam(model.parameters(), lr=5e-4)
+            scaler = torch.cuda.amp.GradScaler()
             for epoch in range(num_epochs):
                 total_loss = 0  
-                for cav_batch, labels in DataLoader(dataset, batch_size=16, shuffle=True):
+                for cav_batch, labels in DataLoader(dataset, batch_size=4, shuffle=True):
                     
                     cav_batch = cav_batch.to(self.device)
                     optimizer.zero_grad()
-                    fused_cav = model(cav_batch)
-                    fused_cav.requires_grad_(True)
-                    loss = criterion(
-                        input=cav_batch,
-                        fused_cav=fused_cav,
-                        decoders=decoders, 
-                        class_acts_layer=class_acts_layer, 
-                        class_examples=class_examples, 
-                        target=target, 
-                        mymodel=mymodel, 
-                        bottlenecks=bottlenecks,
-                        concept_labels=labels
-                    )  # 按层平均
-                    loss.backward()
-                    optimizer.step()
+                    with torch.cuda.amp.autocast():  # 开启混合精度
+                        fused_cav = model(cav_batch)
+                        loss = criterion(
+                            input=cav_batch,
+                            fused_cav=fused_cav,
+                            decoders=decoders, 
+                            class_acts_layer=class_acts_layer, 
+                            class_examples=class_examples, 
+                            target=target, 
+                            mymodel=mymodel, 
+                            bottlenecks=bottlenecks,
+                            concept_labels=labels
+                        ) 
+
+                    scaler.scale(loss).backward()  # 使用 Scaler 进行反向传播
+                    scaler.step(optimizer)  # 更新优化器
+                    scaler.update()  # 更新 Scaler
                     total_loss += loss.item()
+
+                    # fused_cav = model(cav_batch)
+                    # fused_cav.requires_grad_(True)
+                    # loss = criterion(
+                    #     input=cav_batch,
+                    #     fused_cav=fused_cav,
+                    #     decoders=decoders, 
+                    #     class_acts_layer=class_acts_layer, 
+                    #     class_examples=class_examples, 
+                    #     target=target, 
+                    #     mymodel=mymodel, 
+                    #     bottlenecks=bottlenecks,
+                    #     concept_labels=labels
+                    # )  # 按层平均
+                    # loss.backward()
+                    # optimizer.step()
+                    # total_loss += loss.item()
 
                 print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {total_loss:.4f}")
 

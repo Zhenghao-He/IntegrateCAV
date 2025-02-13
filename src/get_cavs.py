@@ -68,7 +68,7 @@ if __name__ == "__main__":
     
 
     original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
-
+    assert num_random_exp >= 10, "num_random_exp should be at least 10"
     cavs = get_cavs(concepts, bottlenecks, cav_dir=original_cavs_path, num_random_exp=num_random_exp)
     os.makedirs(os.path.join(original_cavs_path, "original_cavs"), exist_ok=True)
     cavs_array = np.array(cavs, dtype=object)

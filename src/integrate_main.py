@@ -7,26 +7,29 @@ from configs import embed_dim, hidden_dims, dropout, dim_align_method, fuse_meth
 torch.autograd.set_detect_anomaly(True)
 
 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
 
 if __name__ == "__main__":
     overwrite = True
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    assert len(concepts)>1, "Please provide one concept to integrate"
+    
 
     original_cavs_path = os.path.join(save_dir, model_to_run, "original_cavs")
     cavs = np.load(os.path.join(original_cavs_path,f"cavs_{concepts_string}.npy"), allow_pickle=True)
     # import pdb; pdb.set_trace()
   
     autoencoders = CAVAutoencoder(input_dims=[len(cav[0]) for cav in cavs], embed_dim=embed_dim,hidden_dims=hidden_dims, dropout=dropout, device=device, save_dir=os.path.join(save_dir,model_to_run), overwrite=False)
-    autoencoders.train_autoencoders(cavs=cavs, epochs=40, batch_size=32) #train autoencoder/ we need decoders to reconstruct the cavs for each layer
+    autoencoders.train_autoencoders(cavs=cavs, epochs=5, batch_size=32) #train autoencoder/ we need decoders to reconstruct the cavs for each layer
     # raise ValueError("stop here")
     # import pdb; pdb.set_trace()
+    assert len(concepts)==1, "Please provide one concept to integrate"
     integrate_cav = IntegrateCAV(cavs=cavs, device=device, autoencoders=autoencoders,dim_align_method=dim_align_method,num_random_exp=num_random_exp,save_dir=os.path.join(save_dir,model_to_run)).to(device)
     # align before fusion
     # aligned_cavs = integrate_cav.align_with_moco(queue_size=100, momentum=0.999, temperature=0.07, embed_dim=embed_dim,overwrite=overwrite, epochs=1000)
-    aligned_cavs = integrate_cav.train(embed_dim=embed_dim,overwrite=overwrite, epochs=50, batch_size=32, lr=1e-5)
+    aligned_cavs = integrate_cav.train(embed_dim=embed_dim,overwrite=False, epochs=1000, batch_size=32, lr=1e-3)
     # aligned_cavs = integrate_cav.align_with_transformer(overwrite=overwrite)
     # import pdb; pdb.set_trace()
     fused_cavs = integrate_cav.fuse(fuse_method=fuse_method,bottlenecks=bottlenecks,concepts=concepts, num_random_exp=num_random_exp, target=target, overwrite=overwrite)

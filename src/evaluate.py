@@ -25,7 +25,7 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 def plot_results(results, random_counterpart=None, random_concepts=None, num_random_exp=100, min_p_val=0.05, save_path="/p/realai/zhenghao/CAVFusion/analysis/"):
     # 打开日志文件
     os.makedirs(save_path, exist_ok=True)
-    log_path = os.path.join(save_path, "log.txt")
+    log_path = os.path.join(save_path, f"log_{concepts_string}.txt")
     with open(log_path, "w") as log:
         # Helper function: 判断是否是随机概念
         def is_random_concept(concept):
@@ -130,7 +130,7 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
 
         # 保存图表
         fig.tight_layout()
-        pic_path = os.path.join(save_path, "tcav_results.png")
+        pic_path = os.path.join(save_path, f"tcav_results_{concepts_string}.png")
         plt.savefig(pic_path)
         print(f"Plot saved to {pic_path}")
 

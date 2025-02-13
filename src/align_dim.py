@@ -130,8 +130,8 @@ class CAVAutoencoder:
                 dropout= self.dropout
             ).to(self.device)
   
-        if torch.cuda.device_count() > 1:
-            autoencoder = nn.DataParallel(autoencoder)
+        # if torch.cuda.device_count() > 1:
+        #     autoencoder = nn.DataParallel(autoencoder)
             
         return autoencoder
         
@@ -166,7 +166,7 @@ class CAVAutoencoder:
             
             # Augment and combine data
             layer_cavs = np.array([np.array(cav) for cav in layer_cavs])
-            aug_cav = augment_cavs(layer_cavs, num_augments=10, noise_std=0.1)
+            aug_cav = augment_cavs(layer_cavs, num_augments=100, noise_std=0.1)
             # import pdb; pdb.set_trace()
             layer_cavs = np.concatenate((layer_cavs, aug_cav), axis=0)
             # np.save(os.path.join(self.save_dir, f"layer_{layer_idx}_augmented_cavs.npy"), layer_cavs)
@@ -216,13 +216,16 @@ class CAVAutoencoder:
                 hidden_dims=self.hidden_dims,
                 dropout= self.dropout
             ).to(self.device)
+        
         # Load the checkpoint and remove 'module.' prefix
         checkpoint = torch.load(os.path.join(self.save_dir, f"autoencoder_layer_{layer_idx}_{self.key_params}.pth"))
         # import pdb; pdb.set_trace()
-        checkpoint = remove_module_prefix(checkpoint)
+        # checkpoint = remove_module_prefix(checkpoint)
         # autoencoder = nn.DataParallel(autoencoder)
         autoencoder.load_state_dict(checkpoint)
         autoencoder.eval()
+        autoencoder = nn.DataParallel(autoencoder, device_ids=[0, 1])
+        autoencoder = autoencoder.to(self.device)
         return autoencoder
 
 
