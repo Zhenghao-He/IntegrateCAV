@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import accuracy_score
 import random
 from align_dim import augment_cavs
-from configs import concepts_string, fuse_input
+from configs import concepts_string, fuse_input, mymodel, source_dir, activation_dir
 # from configs import num_random_exp
 
 def normalize_tensor(x, eps=1e-8):
@@ -1234,8 +1234,6 @@ class IntegrateCAV(nn.Module):
             fused_cavs = np.array(fused_cavs)
         elif fuse_method == "transformer":
             import tcav.activation_generator as act_gen
-            import tcav.utils as utils
-            import tcav.model  as model
             if fuse_input == "input_cavs":
                 print("using input cavs as input")
                 aligned_cavs = self._align_dimension_by_ae(type="fuse")
@@ -1245,23 +1243,7 @@ class IntegrateCAV(nn.Module):
             
             aligned_cavs = aligned_cavs[:,:10,:]
             # import pdb; pdb.set_trace()
-            source_dir = '/p/realai/zhenghao/CAVFusion/data'
-            user = 'zhenghao'
-            # the name of the parent directory that results are stored (only if you want to cache)
-            project_name = 'tcav_class_test'
-            working_dir = "/tmp/" + user + '/' + project_name
-            # where activations are stored (only if your act_gen_wrapper does so)
-            activation_dir =  working_dir+ '/activations/'
-            sess = utils.create_session()
-
-            GRAPH_PATH = source_dir + "/inception5h/tensorflow_inception_graph.pb"
-
-
-            LABEL_PATH = source_dir + "/inception5h/imagenet_comp_graph_label_strings.txt"
-
-            mymodel = model.GoogleNetWrapper_public(sess,
-                                                    GRAPH_PATH,
-                                                    LABEL_PATH)
+            
             act_generator = act_gen.ImageActivationGenerator(mymodel, source_dir, activation_dir, max_examples=100)
             decoders = []
             for layer_idx, _ in enumerate(bottlenecks):

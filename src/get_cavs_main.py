@@ -14,18 +14,18 @@ import matplotlib.pyplot as plt
 from scipy.stats import ttest_ind
 
 import tensorflow as tf
+# import tensorflow.compat.v1 as tf
+from configs import alphas, concepts, bottlenecks, target, num_random_exp, is_attack, model_to_run,save_dir, activation_dir, cav_dir, source_dir, mymodel,sess,working_dir
 
-from configs import alphas, concepts, bottlenecks, target, num_random_exp
 
-
-
+# tf.compat.v1.disable_eager_execution()
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 # tf.config.run_functions_eagerly(True)
 
 def plot_results(results, random_counterpart=None, random_concepts=None, num_random_exp=100, min_p_val=0.05, save_path="/p/realai/zhenghao/CAVFusion/analysis/"):
     # 打开日志文件
     os.makedirs(save_path, exist_ok=True)
-    log_path = os.path.join(save_path, "log.txt")
+    log_path = os.path.join(save_path, f"log_{'attacked' if is_attack else 'original'}.txt")
     with open(log_path, "w") as log:
         # Helper function: 判断是否是随机概念
         def is_random_concept(concept):
@@ -136,33 +136,44 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
 
 
 # This is the name of your model wrapper (InceptionV3 and GoogleNet are provided in model.py)
-model_to_run = 'GoogleNet'  
-user = 'new'
-# the name of the parent directory that results are stored (only if you want to cache)
-project_name = 'tcav_class_test'
-working_dir = "/tmp/" + user + '/' + project_name
-# where activations are stored (only if your act_gen_wrapper does so)
-activation_dir =  working_dir+ '/activations/'
-# where CAVs are stored. 
-# You can say None if you don't wish to store any.
-cav_dir = "/p/realai/zhenghao/CAVFusion/analysis/GoogleNet/original_cavs"
-# where the images live.
-save_path = "/p/realai/zhenghao/CAVFusion/analysis/" 
-# TODO: replace 'YOUR_PATH' with path to downloaded models and images. 
-source_dir = '/p/realai/zhenghao/CAVFusion/data'
+# model_to_run = 'GoogleNet'  
+# user = 'zhenghao'
+# # the name of the parent directory that results are stored (only if you want to cache)
+# project_name = 'tcav_class_test'
+# working_dir = "/tmp/" + user + '/' + project_name + '/' + model_to_run
+# # where activations are stored (only if your act_gen_wrapper does so)
+
+
+# # where CAVs are stored. 
+# # You can say None if you don't wish to store any.
+# if not is_attack:
+#     activation_dir =  working_dir+ '/activations/'
+#     cav_dir = os.path.join("/p/realai/zhenghao/CAVFusion/analysis/", model_to_run, "original_cavs")
+#     # cav_dir = "/p/realai/zhenghao/CAVFusion/analysis/GoogleNet/original_cavs"
+# else:
+#     activation_dir =  working_dir+ '/attacked_activations/'
+#     cav_dir = os.path.join("/p/realai/zhenghao/CAVFusion/analysis/", model_to_run, "attacked_cavs")
+#     # cav_dir = "/p/realai/zhenghao/CAVFusion/analysis/GoogleNet/attacked_cavs"
+# # where the images live.
+# save_path = "/p/realai/zhenghao/CAVFusion/analysis/" 
+# # TODO: replace 'YOUR_PATH' with path to downloaded models and images. 
+# source_dir = '/p/realai/zhenghao/CAVFusion/data'
 
 # bottlenecks = [ 'mixed3a']  # @param 
-if __name__ == "__main__":      
+if __name__ == "__main__":     
+    # import pdb; pdb.set_trace() 
     utils.make_dir_if_not_exists(activation_dir)
     utils.make_dir_if_not_exists(working_dir)
     utils.make_dir_if_not_exists(cav_dir)
 
 
     # Create TensorFlow session.
-    sess = utils.create_session()
+    # sess = utils.create_session()
 
     # GRAPH_PATH is where the trained model is stored.
-    GRAPH_PATH = source_dir + "/inception5h/tensorflow_inception_graph.pb"
+    # GRAPH_PATH = source_dir + "/resnet50_v2/resnet50v2_frozen.pb"
+    # GRAPH_PATH = source_dir + "/mobilenet_v2_1.0_224/mobilenet_v2_1.0_224_frozen.pb"
+    # GRAPH_PATH = source_dir + "/inception5h/tensorflow_inception_graph.pb"
     # LABEL_PATH is where the labels are stored. Each line contains one class, and they are ordered with respect to their index in 
     # the logit layer. (yes, id_to_label function in the model wrapper reads from this file.)
     # For example, imagenet_comp_graph_label_strings.txt looks like:
@@ -171,12 +182,28 @@ if __name__ == "__main__":
     # English setter
     # Siberian husky ...
 
-    LABEL_PATH = source_dir + "/inception5h/imagenet_comp_graph_label_strings.txt"
+    # LABEL_PATH = source_dir + "/mobilenet_v2_1.0_224/mobilenet_v2_label_strings.txt"
+    # LABEL_PATH = source_dir + "/inception5h/imagenet_comp_graph_label_strings.txt"
 
-    mymodel = model.GoogleNetWrapper_public(sess,
-                                            GRAPH_PATH,
-                                            LABEL_PATH)
+    # mymodel = model.GoogleNetWrapper_public(sess,
+    #                                         GRAPH_PATH,
+    #                                         LABEL_PATH)
+    # mymodel = model.MobilenetV2Wrapper_public(sess,
+    #                                     GRAPH_PATH,
+    #                                     LABEL_PATH)
+    # mymodel = model.MobilenetV2Wrapper_public(sess,
+    #                                 GRAPH_PATH,
+    #                                 LABEL_PATH)
 
+    # import tensorflow as tf
+    # print(tf.config.list_physical_devices('GPU'))
+    # import pdb; pdb.set_trace()
+    # import tensorflow as tf
+    # graph = tf.compat.v1.get_default_graph()
+    # for op in graph.get_operations():
+    #     print(op.name)
+    import pdb; pdb.set_trace()
+    mymodel.bottlenecks_tensors.keys()
     act_generator = act_gen.ImageActivationGenerator(mymodel, source_dir, activation_dir, max_examples=100)
 
 
@@ -210,4 +237,6 @@ if __name__ == "__main__":
     results = mytcav.run(run_parallel=False)
     print('done!')
     utils_plot.plot_results=plot_results # plot to file
-    utils_plot.plot_results(results, num_random_exp=num_random_exp,save_path="/p/realai/zhenghao/CAVFusion/analysis/GoogleNet/original_results")
+    save_path = os.path.join(save_dir,model_to_run,"original_results")
+    os.makedirs(save_path, exist_ok=True)
+    utils_plot.plot_results(results, num_random_exp=num_random_exp,save_path=save_path)
